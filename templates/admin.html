@@ -16,23 +16,15 @@
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { background: var(--bg); color: var(--txt); font-family: var(--mono); font-size: 12px; }
-body::before {
-  content: ''; position: fixed; inset: 0;
-  background-image: linear-gradient(rgba(0,212,255,0.02) 1px, transparent 1px), linear-gradient(90deg, rgba(0,212,255,0.02) 1px, transparent 1px);
-  background-size: 40px 40px; pointer-events: none;
-}
-header {
-  position: sticky; top: 0; z-index: 100;
-  background: rgba(4,6,13,0.95); border-bottom: 1px solid var(--border);
-  padding: 16px 32px; display: flex; align-items: center; justify-content: space-between;
-  backdrop-filter: blur(10px);
-}
+body::before { content: ''; position: fixed; inset: 0; background-image: linear-gradient(rgba(0,212,255,0.02) 1px, transparent 1px), linear-gradient(90deg, rgba(0,212,255,0.02) 1px, transparent 1px); background-size: 40px 40px; pointer-events: none; }
+header { position: sticky; top: 0; z-index: 100; background: rgba(4,6,13,0.95); border-bottom: 1px solid var(--border); padding: 16px 32px; display: flex; align-items: center; justify-content: space-between; backdrop-filter: blur(10px); }
 .logo { font-family: var(--sans); font-size: 18px; font-weight: 800; color: var(--wht); }
 .logo span { color: var(--red); }
-.nav { display: flex; gap: 16px; align-items: center; }
-.nav a { color: var(--txt); text-decoration: none; font-size: 11px; letter-spacing: 1px; padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border); transition: all 0.2s; }
-.nav a:hover { border-color: var(--acc); color: var(--acc); }
-.nav a.active { border-color: var(--acc); color: var(--acc); background: rgba(0,212,255,0.05); }
+.header-right { display: flex; gap: 12px; align-items: center; }
+.nav-btn { color: var(--txt); text-decoration: none; font-size: 11px; letter-spacing: 1px; padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border); transition: all 0.2s; cursor: pointer; background: transparent; font-family: var(--mono); }
+.nav-btn:hover { border-color: var(--acc); color: var(--acc); }
+.nav-btn.logout { border-color: rgba(255,34,68,0.2); color: var(--dim); }
+.nav-btn.logout:hover { border-color: var(--red); color: var(--red); }
 main { max-width: 1400px; margin: 0 auto; padding: 32px; position: relative; z-index: 1; }
 .page-title { font-family: var(--sans); font-size: 24px; font-weight: 800; color: var(--wht); margin-bottom: 6px; }
 .page-sub { color: var(--dim); font-size: 11px; letter-spacing: 2px; margin-bottom: 32px; }
@@ -54,28 +46,33 @@ tbody tr:hover { background: rgba(255,255,255,0.02); }
 tbody tr:last-child { border-bottom: none; }
 td { padding: 12px 16px; vertical-align: middle; }
 .user-cell { display: flex; align-items: center; gap: 10px; }
-.avatar { width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--border2); flex-shrink: 0; background: var(--bg3); object-fit: cover; }
+.avatar { width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--border2); flex-shrink: 0; object-fit: cover; }
 .avatar-ph { width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--border2); flex-shrink: 0; background: var(--acc); display: flex; align-items: center; justify-content: center; color: #04060d; font-weight: 700; font-size: 12px; }
 .name { color: var(--wht); font-size: 12px; }
 .email { color: var(--dim); font-size: 10px; }
 .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 700; letter-spacing: 1px; }
 .badge.admin { background: rgba(255,34,68,0.15); color: var(--red); border: 1px solid rgba(255,34,68,0.3); }
 .badge.user { background: rgba(0,212,255,0.08); color: var(--acc); border: 1px solid rgba(0,212,255,0.2); }
+.badge.banned { background: rgba(255,34,68,0.2); color: var(--red); border: 1px solid var(--red); }
 .num { color: var(--acc); font-weight: 700; }
 .dim { color: var(--dim); }
 .threat-cell { color: var(--red); font-weight: 700; }
 .no-threat { color: var(--grn); }
-.time-cell { color: var(--txt); }
+.btn-ban { padding: 4px 12px; border-radius: 5px; font-size: 10px; font-weight: 700; letter-spacing: 1px; cursor: pointer; border: none; font-family: var(--mono); transition: all 0.2s; }
+.btn-ban.ban { background: rgba(255,34,68,0.15); color: var(--red); border: 1px solid rgba(255,34,68,0.3); }
+.btn-ban.ban:hover { background: var(--red); color: #fff; }
+.btn-ban.unban { background: rgba(0,255,136,0.1); color: var(--grn); border: 1px solid rgba(0,255,136,0.3); }
+.btn-ban.unban:hover { background: var(--grn); color: #04060d; }
+.online-dot { display: inline-block; width: 7px; height: 7px; background: var(--grn); border-radius: 50%; margin-right: 4px; }
 </style>
 </head>
 <body>
 
 <header>
   <div class="logo">Teranga DEV — <span>ADMIN</span></div>
-  <div class="nav">
-    <a href="/">Scanner</a>
-    <a href="/admin" class="active">Dashboard</a>
-    <a href="/logout">Déconnexion</a>
+  <div class="header-right">
+    <a href="/" class="nav-btn">Scanner</a>
+    <a href="/logout" class="nav-btn logout">Déconnexion</a>
   </div>
 </header>
 
@@ -83,7 +80,6 @@ td { padding: 12px 16px; vertical-align: middle; }
   <div class="page-title">Dashboard Admin</div>
   <div class="page-sub">SUPERVISION — UTILISATEURS ET ACTIVITÉ</div>
 
-  <!-- STATS -->
   <div class="stats-grid">
     <div class="stat-card c-acc">
       <div class="stat-val">{{ total_users }}</div>
@@ -110,16 +106,18 @@ td { padding: 12px 16px; vertical-align: middle; }
         <tr>
           <th>Utilisateur</th>
           <th>Rôle</th>
+          <th>Statut</th>
           <th>Inscription</th>
           <th>Dernière connexion</th>
           <th>Scans</th>
           <th>Temps total</th>
           <th>Sessions</th>
+          <th>Action</th>
         </tr>
       </thead>
       <tbody>
         {% for u in users %}
-        <tr>
+        <tr id="user-row-{{ loop.index }}">
           <td>
             <div class="user-cell">
               {% if u.picture %}
@@ -134,21 +132,39 @@ td { padding: 12px 16px; vertical-align: middle; }
             </div>
           </td>
           <td>
-            {% if u.email in ['elimanem8077@gmail.com'] %}
+            {% if u.email in admin_emails %}
             <span class="badge admin">ADMIN</span>
             {% else %}
             <span class="badge user">USER</span>
             {% endif %}
           </td>
+          <td>
+            {% if u.banned %}
+            <span class="badge banned">BANNI</span>
+            {% else %}
+            <span style="color:var(--grn);font-size:10px;">● ACTIF</span>
+            {% endif %}
+          </td>
           <td class="dim">{{ u.created_at[:16] if u.created_at else '—' }}</td>
           <td class="dim">{{ u.last_seen[:16] if u.last_seen else '—' }}</td>
           <td><span class="num">{{ u.scan_count or 0 }}</span></td>
-          <td class="time-cell">
+          <td>
             {% set mins = (u.total_time or 0) // 60 %}
             {% set secs = (u.total_time or 0) % 60 %}
-            {{ '%02d:%02d'|format(mins, secs) }}
+            <span style="color:var(--txt)">{{ '%02d:%02d'|format(mins, secs) }}</span>
           </td>
           <td><span class="num">{{ u.session_count or 0 }}</span></td>
+          <td>
+            {% if u.email not in admin_emails %}
+            {% if u.banned %}
+            <button class="btn-ban unban" onclick="toggleBan('{{ u.email }}', false, {{ loop.index }})">DÉBANNIR</button>
+            {% else %}
+            <button class="btn-ban ban" onclick="toggleBan('{{ u.email }}', true, {{ loop.index }})">BANNIR</button>
+            {% endif %}
+            {% else %}
+            <span class="dim">—</span>
+            {% endif %}
+          </td>
         </tr>
         {% endfor %}
       </tbody>
@@ -163,13 +179,7 @@ td { padding: 12px 16px; vertical-align: middle; }
     </div>
     <table>
       <thead>
-        <tr>
-          <th>Utilisateur</th>
-          <th>Connexion</th>
-          <th>Déconnexion</th>
-          <th>Durée</th>
-          <th>Scans</th>
-        </tr>
+        <tr><th>Utilisateur</th><th>Connexion</th><th>Déconnexion</th><th>Durée</th><th>Scans</th></tr>
       </thead>
       <tbody>
         {% for s in sessions_list %}
@@ -179,12 +189,18 @@ td { padding: 12px 16px; vertical-align: middle; }
             <div class="email">{{ s.user_email }}</div>
           </td>
           <td class="dim">{{ s.login_at[:16] if s.login_at else '—' }}</td>
-          <td class="dim">{{ s.logout_at[:16] if s.logout_at else '<span style="color:var(--grn)">En ligne</span>' }}</td>
-          <td class="time-cell">
+          <td>
+            {% if s.logout_at %}
+            <span class="dim">{{ s.logout_at[:16] }}</span>
+            {% else %}
+            <span style="color:var(--grn)"><span class="online-dot"></span>En ligne</span>
+            {% endif %}
+          </td>
+          <td>
             {% if s.duration %}
             {% set mins = s.duration // 60 %}
             {% set secs = s.duration % 60 %}
-            {{ '%02d:%02d'|format(mins, secs) }}
+            <span style="color:var(--txt)">{{ '%02d:%02d'|format(mins, secs) }}</span>
             {% else %}—{% endif %}
           </td>
           <td><span class="num">{{ s.scans_in_session or 0 }}</span></td>
@@ -202,13 +218,7 @@ td { padding: 12px 16px; vertical-align: middle; }
     </div>
     <table>
       <thead>
-        <tr>
-          <th>Utilisateur</th>
-          <th>Date</th>
-          <th>Fichiers scannés</th>
-          <th>Menaces</th>
-          <th>Critiques</th>
-        </tr>
+        <tr><th>Utilisateur</th><th>Date</th><th>Fichiers scannés</th><th>Menaces</th><th>Critiques</th></tr>
       </thead>
       <tbody>
         {% for sl in scan_logs %}
@@ -219,26 +229,36 @@ td { padding: 12px 16px; vertical-align: middle; }
           </td>
           <td class="dim">{{ sl.scanned_at[:16] if sl.scanned_at else '—' }}</td>
           <td><span class="num">{{ sl.files_count or 0 }}</span></td>
-          <td>
-            {% if sl.threats_found and sl.threats_found > 0 %}
-            <span class="threat-cell">{{ sl.threats_found }}</span>
-            {% else %}
-            <span class="no-threat">0</span>
-            {% endif %}
-          </td>
-          <td>
-            {% if sl.critical_count and sl.critical_count > 0 %}
-            <span class="threat-cell">{{ sl.critical_count }}</span>
-            {% else %}
-            <span class="no-threat">0</span>
-            {% endif %}
-          </td>
+          <td>{% if sl.threats_found and sl.threats_found > 0 %}<span class="threat-cell">{{ sl.threats_found }}</span>{% else %}<span class="no-threat">0</span>{% endif %}</td>
+          <td>{% if sl.critical_count and sl.critical_count > 0 %}<span class="threat-cell">{{ sl.critical_count }}</span>{% else %}<span class="no-threat">0</span>{% endif %}</td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
-
 </main>
+
+<script>
+async function toggleBan(email, ban, rowIndex) {
+  const action = ban ? 'ban' : 'unban';
+  const msg = ban ? `Bannir ${email} ?` : `Débannir ${email} ?`;
+  if (!confirm(msg)) return;
+  try {
+    const res = await fetch(`/admin/${action}`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({email})
+    });
+    const data = await res.json();
+    if (data.success) {
+      location.reload();
+    } else {
+      alert('Erreur: ' + (data.error || 'Inconnu'));
+    }
+  } catch(e) {
+    alert('Erreur réseau');
+  }
+}
+</script>
 </body>
 </html>
