@@ -396,17 +396,28 @@ async function analyzeWithAI(idx, filepath, event) {
   const result = window._scanResults[idx];
   const fname = filepath.split('/').pop();
 
-  // Get file content
-  let content = fileContents[fname] || fileContents[filepath] || '';
-
   btn.disabled = true;
-  btn.textContent = '⏳ ANALYSE...';
+  btn.textContent = '⏳ LECTURE...';
   panel.classList.add('open');
-  panel.innerHTML = '<div class="ai-loading">🤖 Claude analyse le fichier...</div>';
+  panel.innerHTML = '<div class="ai-loading">📂 Lecture du fichier...</div>';
 
-  // Open the result body
   document.getElementById('body-'+idx).classList.add('open');
   document.getElementById('toggle-'+idx).classList.add('open');
+
+  // Trouve le fichier dans selectedFiles
+  const fileObj = selectedFiles.find(f => f.name === fname || f.name === filepath);
+  let content = '';
+  if (fileObj) {
+    content = await new Promise(resolve => {
+      const reader = new FileReader();
+      reader.onload = e => resolve(e.target.result);
+      reader.onerror = () => resolve('');
+      reader.readAsText(fileObj);
+    });
+  }
+
+  panel.innerHTML = '<div class="ai-loading">🤖 Claude analyse le fichier...</div>';
+  btn.textContent = '⏳ ANALYSE...';
 
   try {
     const res = await fetch('/ai_analyze', {
@@ -423,10 +434,7 @@ async function analyzeWithAI(idx, filepath, event) {
     if (data.success) {
       const r = data.result;
       const suppressed = r.lignes_supprimees && r.lignes_supprimees.length > 0
-        ? `<div class="ai-suppressed">
-            <div class="ai-suppressed-title">⚡ Lignes supprimées :</div>
-            <ul>${r.lignes_supprimees.map(l => `<li>${l}</li>`).join('')}</ul>
-           </div>` : '';
+        ? `<div class="ai-suppressed"><div class="ai-suppressed-title">⚡ Lignes supprimées :</div><ul>${r.lignes_supprimees.map(l => `<li>${l}</li>`).join('')}</ul></div>` : '';
 
       const downloadBtn = r.fichier_nettoye
         ? `<button class="btn-download" onclick="downloadClean('${fname}', ${idx})">↓ TÉLÉCHARGER FICHIER NETTOYÉ</button>` : '';
@@ -436,8 +444,6 @@ async function analyzeWithAI(idx, filepath, event) {
         <div class="ai-analyse">${r.analyse || ''}</div>
         ${suppressed}
         ${downloadBtn}`;
-
-      // Store cleaned content
       if (r.fichier_nettoye) {
         window['_clean_' + idx] = { name: fname, content: r.fichier_nettoye };
       }
