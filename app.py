@@ -434,7 +434,7 @@ def ai_analyze():
         for f in findings[:10]
     ])
 
-    prompt = f"""Tu es un expert en sécurité FiveM spécialisé dans la détection et le nettoyage de backdoors Lua.
+    prompt = f"""Tu es un expert en sécurité FiveM spécialisé dans la détection de backdoors Lua.
 
 Fichier analysé : `{filename}`
 
@@ -448,14 +448,16 @@ Contenu du fichier (extrait) :
 
 Ta mission :
 1. Explique en français ce que font exactement les backdoors détectés (2-3 phrases max par backdoor)
-2. Fournis le fichier NETTOYÉ complet avec les lignes malveillantes supprimées
-3. Liste les lignes supprimées
+2. Donne le numéro exact de chaque ligne à supprimer avec le contenu exact de la ligne
+3. Explique pourquoi chaque ligne doit être supprimée
 
 Réponds en JSON avec ce format exact :
 {{
   "analyse": "explication claire des backdoors trouvés",
-  "lignes_supprimees": ["description ligne 1", "description ligne 2"],
-  "fichier_nettoye": "contenu complet du fichier nettoyé"
+  "lignes_supprimees": [
+    {{"ligne": 430, "contenu": "loadFonts(...)", "raison": "Fake Font backdoor - exécution de code arbitraire"}},
+    {{"ligne": 12, "contenu": "require('http').get(...)", "raison": "Chargement de code depuis URL distante"}}
+  ]
 }}"""
 
     try:
