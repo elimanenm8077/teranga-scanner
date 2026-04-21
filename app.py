@@ -3,9 +3,16 @@ from pathlib import Path
 from flask import Flask, request, jsonify, render_template, redirect, url_for, session
 from datetime import datetime
 from functools import wraps
-import sqlite3
 import time
 import requests
+
+try:
+    import psycopg2
+    import psycopg2.extras
+    POSTGRES = True
+except ImportError:
+    import sqlite3
+    POSTGRES = False
 
 try:
     import rarfile
@@ -26,18 +33,55 @@ GOOGLE_AUTH_URL  = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_USER_URL  = "https://www.googleapis.com/oauth2/v2/userinfo"
 
+DATABASE_URL = os.environ.get('DATABASE_URL', '')
+
 # ================================================================
 # DATABASE
 # ================================================================
 
 def get_db():
-    db = sqlite3.connect('/tmp/scanner.db')
-    db.row_factory = sqlite3.Row
-    return db
+    if POSTGRES and DATABASE_URL:
+        conn = psycopg2.connect(DATABASE_URL)
+        return conn
+    else:
+        import sqlite3
+        conn = sqlite3.connect('/tmp/scanner.db')
+        conn.row_factory = sqlite3.Row
+        return conn
 
 def init_db():
-    with get_db() as db:
-        db.execute('''CREATE TABLE IF NOT EXISTS users (
+    conn = get_db()
+    cur = conn.cursor()
+    if POSTGRES and DATABASE_URL:
+        cur.execute('''CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
+            email TEXT UNIQUE NOT NULL,
+            name TEXT, picture TEXT,
+            created_at TIMESTAMP DEFAULT NOW(),
+            last_seen TIMESTAMP,
+            scan_count INTEGER DEFAULT 0,
+            total_time INTEGER DEFAULT 0,
+            banned INTEGER DEFAULT 0
+        )''')
+        cur.execute('''CREATE TABLE IF NOT EXISTS sessions (
+            id SERIAL PRIMARY KEY,
+            user_email TEXT,
+            login_at TIMESTAMP DEFAULT NOW(),
+            logout_at TIMESTAMP,
+            duration INTEGER DEFAULT 0,
+            scans_in_session INTEGER DEFAULT 0
+        )''')
+        cur.execute('''CREATE TABLE IF NOT EXISTS scan_logs (
+            id SERIAL PRIMARY KEY,
+            user_email TEXT,
+            scanned_at TIMESTAMP DEFAULT NOW(),
+            files_count INTEGER,
+            threats_found INTEGER,
+            critical_count INTEGER
+        )''')
+    else:
+        import sqlite3
+        cur.execute('''CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             email TEXT UNIQUE NOT NULL,
             name TEXT, picture TEXT,
@@ -47,11 +91,10 @@ def init_db():
             total_time INTEGER DEFAULT 0,
             banned INTEGER DEFAULT 0
         )''')
-        # Add banned column if missing (migration)
         try:
-            db.execute('ALTER TABLE users ADD COLUMN banned INTEGER DEFAULT 0')
+            cur.execute('ALTER TABLE users ADD COLUMN banned INTEGER DEFAULT 0')
         except: pass
-        db.execute('''CREATE TABLE IF NOT EXISTS sessions (
+        cur.execute('''CREATE TABLE IF NOT EXISTS sessions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_email TEXT,
             login_at TEXT DEFAULT (datetime('now')),
@@ -59,7 +102,7 @@ def init_db():
             duration INTEGER DEFAULT 0,
             scans_in_session INTEGER DEFAULT 0
         )''')
-        db.execute('''CREATE TABLE IF NOT EXISTS scan_logs (
+        cur.execute('''CREATE TABLE IF NOT EXISTS scan_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_email TEXT,
             scanned_at TEXT DEFAULT (datetime('now')),
@@ -67,9 +110,46 @@ def init_db():
             threats_found INTEGER,
             critical_count INTEGER
         )''')
-        db.commit()
+    conn.commit()
+    cur.close()
+    conn.close()
 
 init_db()
+
+def db_execute(query, params=(), fetchone=False, fetchall=False):
+    conn = get_db()
+    if POSTGRES and DATABASE_URL:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        # Convert SQLite ? placeholders to PostgreSQL %s
+        query = query.replace('?', '%s')
+        # Convert SQLite datetime functions
+        query = query.replace("datetime('now')", "NOW()")
+        query = query.replace("ON CONFLICT(email) DO UPDATE SET", "ON CONFLICT (email) DO UPDATE SET")
+    else:
+        cur = conn.cursor()
+    try:
+        cur.execute(query, params)
+        result = None
+        if fetchone:
+            row = cur.fetchone()
+            if row and POSTGRES:
+                result = dict(row)
+            else:
+                result = row
+        elif fetchall:
+            rows = cur.fetchall()
+            if rows and POSTGRES:
+                result = [dict(r) for r in rows]
+            else:
+                result = rows
+        conn.commit()
+        return result
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        cur.close()
+        conn.close()
 
 # ================================================================
 # AUTH
@@ -80,13 +160,14 @@ def login_required(f):
     def decorated(*args, **kwargs):
         if not session.get('user'):
             return redirect(url_for('login_page'))
-        # Vérifie si banni à chaque requête
         email = session['user'].get('email')
-        with get_db() as db:
-            u = db.execute('SELECT banned FROM users WHERE email=?', (email,)).fetchone()
-            if u and u['banned']:
+        try:
+            u = db_execute('SELECT banned FROM users WHERE email=%s' if (POSTGRES and DATABASE_URL) else 'SELECT banned FROM users WHERE email=?',
+                          (email,), fetchone=True)
+            if u and (u['banned'] if isinstance(u, dict) else u[0]):
                 session.clear()
                 return redirect(url_for('login_page'))
+        except: pass
         return f(*args, **kwargs)
     return decorated
 
@@ -142,18 +223,26 @@ def callback():
         picture = user_info.get('picture', '')
 
         # Check if banned
-        with get_db() as db:
-            existing = db.execute('SELECT banned FROM users WHERE email=?', (email,)).fetchone()
-            if existing and existing['banned']:
-                return render_template('login.html', error="Votre compte a été banni. Contactez l'administrateur.")
+        existing = db_execute('SELECT banned FROM users WHERE email=%s' if (POSTGRES and DATABASE_URL) else 'SELECT banned FROM users WHERE email=?',
+                              (email,), fetchone=True)
+        if existing and (existing['banned'] if isinstance(existing, dict) else existing[0]):
+            return render_template('login.html', error="Votre compte a été banni. Contactez l'administrateur.")
 
-            db.execute('''INSERT INTO users (email, name, picture, last_seen)
+        if POSTGRES and DATABASE_URL:
+            db_execute('''INSERT INTO users (email, name, picture, last_seen)
+                          VALUES (%s, %s, %s, NOW())
+                          ON CONFLICT (email) DO UPDATE SET
+                          name=EXCLUDED.name, picture=EXCLUDED.picture, last_seen=NOW()''',
+                       (email, name, picture))
+        else:
+            db_execute('''INSERT INTO users (email, name, picture, last_seen)
                           VALUES (?, ?, ?, datetime('now'))
                           ON CONFLICT(email) DO UPDATE SET
                           name=excluded.name, picture=excluded.picture,
                           last_seen=datetime('now')''', (email, name, picture))
-            db.execute('INSERT INTO sessions (user_email) VALUES (?)', (email,))
-            db.commit()
+
+        db_execute('INSERT INTO sessions (user_email) VALUES (%s)' if (POSTGRES and DATABASE_URL) else 'INSERT INTO sessions (user_email) VALUES (?)',
+                   (email,))
 
         session['user'] = {'email': email, 'name': name, 'picture': picture}
         session['session_start'] = int(time.time())
@@ -170,14 +259,13 @@ def logout():
         start    = session.get('session_start', int(time.time()))
         duration = int(time.time()) - start
         scans    = session.get('session_scans', 0)
-        with get_db() as db:
-            db.execute('''UPDATE sessions SET logout_at=datetime('now'),
-                          duration=?, scans_in_session=?
-                          WHERE user_email=? AND logout_at IS NULL''',
-                       (duration, scans, user['email']))
-            db.execute('UPDATE users SET total_time=total_time+? WHERE email=?',
-                       (duration, user['email']))
-            db.commit()
+        ph = '%s' if (POSTGRES and DATABASE_URL) else '?'
+        db_execute(f'''UPDATE sessions SET logout_at={'NOW()' if (POSTGRES and DATABASE_URL) else "datetime('now)"},
+                      duration={ph}, scans_in_session={ph}
+                      WHERE user_email={ph} AND logout_at IS NULL''',
+                   (duration, scans, user['email']))
+        db_execute(f'UPDATE users SET total_time=total_time+{ph} WHERE email={ph}',
+                   (duration, user['email']))
     session.clear()
     return redirect(url_for('login_page'))
 
@@ -436,11 +524,10 @@ def scan():
     user = session.get('user')
     if user:
         session['session_scans'] = session.get('session_scans', 0) + 1
-        with get_db() as db:
-            db.execute('UPDATE users SET scan_count=scan_count+1 WHERE email=?', (user['email'],))
-            db.execute('INSERT INTO scan_logs (user_email, files_count, threats_found, critical_count) VALUES (?,?,?,?)',
-                       (user['email'], len(all_results), len(threats), critical))
-            db.commit()
+        ph = '%s' if (POSTGRES and DATABASE_URL) else '?'
+        db_execute(f'UPDATE users SET scan_count=scan_count+1 WHERE email={ph}', (user['email'],))
+        db_execute(f'INSERT INTO scan_logs (user_email, files_count, threats_found, critical_count) VALUES ({ph},{ph},{ph},{ph})',
+                   (user['email'], len(all_results), len(threats), critical))
     return jsonify({
         'results': all_results,
         'stats': {'scanned': len(all_results), 'threats': len(threats), 'critical': critical, 'medium': medium, 'low': low, 'clean': len(all_results)-len(threats)},
@@ -455,17 +542,27 @@ def scan():
 @login_required
 @admin_required
 def admin():
-    with get_db() as db:
-        users = db.execute('SELECT u.*, COUNT(s.id) as session_count FROM users u LEFT JOIN sessions s ON s.user_email=u.email GROUP BY u.email ORDER BY u.last_seen DESC').fetchall()
-        sessions_list = db.execute('SELECT s.*, u.name FROM sessions s LEFT JOIN users u ON u.email=s.user_email ORDER BY s.login_at DESC LIMIT 50').fetchall()
-        scan_logs = db.execute('SELECT sl.*, u.name FROM scan_logs sl LEFT JOIN users u ON u.email=sl.user_email ORDER BY sl.scanned_at DESC LIMIT 50').fetchall()
-        total_users   = db.execute('SELECT COUNT(*) FROM users').fetchone()[0]
-        total_scans   = db.execute('SELECT SUM(scan_count) FROM users').fetchone()[0] or 0
-        total_threats = db.execute('SELECT SUM(threats_found) FROM scan_logs').fetchone()[0] or 0
+    ph = '%s' if (POSTGRES and DATABASE_URL) else '?'
+    users = db_execute('SELECT u.*, COUNT(s.id) as session_count FROM users u LEFT JOIN sessions s ON s.user_email=u.email GROUP BY u.id, u.email, u.name, u.picture, u.created_at, u.last_seen, u.scan_count, u.total_time, u.banned ORDER BY u.last_seen DESC NULLS LAST', fetchall=True)
+    sessions_list = db_execute('SELECT s.*, u.name FROM sessions s LEFT JOIN users u ON u.email=s.user_email ORDER BY s.login_at DESC LIMIT 50', fetchall=True)
+    scan_logs = db_execute('SELECT sl.*, u.name FROM scan_logs sl LEFT JOIN users u ON u.email=sl.user_email ORDER BY sl.scanned_at DESC LIMIT 50', fetchall=True)
+    total_users   = db_execute('SELECT COUNT(*) as c FROM users', fetchone=True)
+    total_scans   = db_execute('SELECT SUM(scan_count) as s FROM users', fetchone=True)
+    total_threats = db_execute('SELECT SUM(threats_found) as t FROM scan_logs', fetchone=True)
+
+    def val(r, k):
+        if isinstance(r, dict): return r.get(k) or 0
+        return r[0] if r else 0
+
     return render_template('admin.html',
-        users=users, sessions_list=sessions_list, scan_logs=scan_logs,
-        total_users=total_users, total_scans=total_scans, total_threats=total_threats,
-        admin_user=session.get('user'), admin_emails=ADMIN_EMAILS)
+        users=users or [],
+        sessions_list=sessions_list or [],
+        scan_logs=scan_logs or [],
+        total_users=val(total_users, 'c'),
+        total_scans=val(total_scans, 's'),
+        total_threats=val(total_threats, 't'),
+        admin_user=session.get('user'),
+        admin_emails=ADMIN_EMAILS)
 
 @app.route('/admin/ban', methods=['POST'])
 @login_required
@@ -475,9 +572,8 @@ def ban_user():
     email = data.get('email')
     if not email or email in ADMIN_EMAILS:
         return jsonify({'success': False, 'error': 'Action non autorisee'})
-    with get_db() as db:
-        db.execute('UPDATE users SET banned=1 WHERE email=?', (email,))
-        db.commit()
+    ph = '%s' if (POSTGRES and DATABASE_URL) else '?'
+    db_execute(f'UPDATE users SET banned=1 WHERE email={ph}', (email,))
     return jsonify({'success': True})
 
 @app.route('/admin/unban', methods=['POST'])
@@ -488,9 +584,8 @@ def unban_user():
     email = data.get('email')
     if not email:
         return jsonify({'success': False, 'error': 'Email manquant'})
-    with get_db() as db:
-        db.execute('UPDATE users SET banned=0 WHERE email=?', (email,))
-        db.commit()
+    ph = '%s' if (POSTGRES and DATABASE_URL) else '?'
+    db_execute(f'UPDATE users SET banned=0 WHERE email={ph}', (email,))
     return jsonify({'success': True})
 
 @app.route('/health')
