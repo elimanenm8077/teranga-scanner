@@ -1,12 +1,13 @@
 import os, re, base64, math, zipfile, io, json, hashlib
 from pathlib import Path
 from flask import Flask, request, jsonify, render_template, redirect, url_for, session
-from datetime import datetime, timedelta
+from datetime import datetime
 from functools import wraps
 import sqlite3
 import time
+import requests as req
 
-from flask_dance.contrib.google import make_google_blueprint, google
+from flask_dance.contrib.google import make_google_blueprint, google as google_oauth
 
 try:
     import rarfile
@@ -17,17 +18,28 @@ except ImportError:
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'teranga-dev-secret-2026-tarkalla')
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024
+os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '0'
+os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
 
 GOOGLE_CLIENT_ID     = os.environ.get('GOOGLE_CLIENT_ID', '')
 GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', '')
-ADMIN_EMAILS         = os.environ.get('ADMIN_EMAILS', '').split(',')
+ADMIN_EMAILS         = [e.strip() for e in os.environ.get('ADMIN_EMAILS', '').split(',')]
+
+# Setup Google blueprint
+google_bp = make_google_blueprint(
+    client_id=GOOGLE_CLIENT_ID,
+    client_secret=GOOGLE_CLIENT_SECRET,
+    scope=['openid', 'https://www.googleapis.com/auth/userinfo.email', 'https://www.googleapis.com/auth/userinfo.profile'],
+    redirect_url='/google_callback'
+)
+app.register_blueprint(google_bp, url_prefix='/google_auth')
 
 # ================================================================
 # DATABASE
 # ================================================================
 
 def get_db():
-    db = sqlite3.connect('scanner.db')
+    db = sqlite3.connect('/tmp/scanner.db')
     db.row_factory = sqlite3.Row
     return db
 
@@ -64,23 +76,14 @@ def init_db():
 init_db()
 
 # ================================================================
-# OAUTH
+# AUTH HELPERS
 # ================================================================
-
-oauth = OAuth(app)
-google = oauth.register(
-    name='google',
-    client_id=GOOGLE_CLIENT_ID,
-    client_secret=GOOGLE_CLIENT_SECRET,
-    server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
-    client_kwargs={'scope': 'openid email profile'},
-)
 
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         if not session.get('user'):
-            return redirect(url_for('login'))
+            return redirect(url_for('login_page'))
         return f(*args, **kwargs)
     return decorated
 
@@ -241,24 +244,19 @@ def scan_file(filename, content_bytes):
         content = content_bytes.decode('utf-8', errors='ignore')
     except:
         return {"file": filename, "findings": [], "score": 0, "risk_level": "CLEAN"}
-
     if len(content) < 30:
         return {"file": filename, "findings": [], "score": 0, "risk_level": "CLEAN"}
-
     ext  = Path(filename).suffix.lower()
     name = Path(filename).name.lower()
-
     if name == 'fxmanifest.lua' or ext == '.cfg':
         sigs = SIGNATURES_CFG
     elif ext in ('.html', '.htm'):
         sigs = SIGNATURES_NUI
     else:
         sigs = SIGNATURES_LUA
-
     lines = content.split('\n')
     findings = []
-    score    = 0
-
+    score = 0
     for cat, patterns in sigs.items():
         for pat, sev, desc in patterns:
             for m in re.finditer(pat, content, re.I | re.M):
@@ -266,8 +264,7 @@ def scan_file(filename, content_bytes):
                 ctx_start = max(0, ln - 4)
                 ctx_end   = min(len(lines), ln + 4)
                 ctx = '\n'.join(lines[ctx_start:ctx_end]).lower()
-                if is_whitelisted(ctx):
-                    continue
+                if is_whitelisted(ctx): continue
                 score += sev
                 findings.append({
                     "line": ln, "category": cat,
@@ -278,23 +275,19 @@ def scan_file(filename, content_bytes):
                         for i in range(ctx_start, ctx_end)
                     )
                 })
-
     for f in check_base64(content):
         score += f['severity']
         findings.append(f)
-
     ent = entropy(content[:2000])
-    if ent > 6.2 and any('EXEC' in f['category'] or 'OBFUSC' in f['category'] for f in findings):
+    if ent > 6.2 and any('EXEC' in f['category'] for f in findings):
         score += 2
-        findings.append({"line": "ent", "category": "ENTROPIE", "pattern": f"{ent:.2f}/8.0", "severity": 2, "description": "Obfuscation lourde detectee", "context": ""})
-
+        findings.append({"line": "ent", "category": "ENTROPIE", "pattern": f"{ent:.2f}/8.0", "severity": 2, "description": "Obfuscation lourde", "context": ""})
     risk = "CLEAN" if score==0 else "LOW" if score<=3 else "MEDIUM" if score<=7 else "CRITICAL"
     return {"file": filename, "score": score, "risk_level": risk, "findings": findings, "total_findings": len(findings)}
 
 def should_scan(filename):
-    ext   = Path(filename).suffix.lower()
-    parts = Path(filename).parts
-    for part in parts:
+    ext = Path(filename).suffix.lower()
+    for part in Path(filename).parts:
         if part in SKIP_DIRS: return False
     if ext in SKIP_EXTENSIONS: return False
     if ext not in SCAN_EXTENSIONS and ext != '': return False
@@ -305,7 +298,6 @@ def extract_and_scan(file_storage):
     content  = file_storage.read()
     ext      = Path(filename).suffix.lower()
     results  = []
-
     if ext == '.zip':
         try:
             with zipfile.ZipFile(io.BytesIO(content)) as zf:
@@ -339,7 +331,6 @@ def extract_and_scan(file_storage):
             r = scan_file(filename, content)
             if r.get('findings') or r.get('score', 0) > 0:
                 results.append(r)
-
     return results
 
 # ================================================================
@@ -347,42 +338,41 @@ def extract_and_scan(file_storage):
 # ================================================================
 
 @app.route('/login')
-def login():
-    redirect_uri = url_for('callback', _external=True)
-    return google.authorize_redirect(redirect_uri)
+def login_page():
+    if session.get('user'):
+        return redirect(url_for('index'))
+    return render_template('login.html')
 
-@app.route('/callback')
-def callback():
+@app.route('/google_login')
+def google_login():
+    return redirect(url_for('google.login'))
+
+@app.route('/google_callback')
+def google_callback():
+    if not google_oauth.authorized:
+        return redirect(url_for('google.login'))
     try:
-        token = google.authorize_access_token()
-        user_info = token.get('userinfo')
-        if not user_info:
-            import httpx
-            resp = httpx.get('https://www.googleapis.com/oauth2/v3/userinfo',
-                             headers={'Authorization': f'Bearer {token["access_token"]}'})
-            user_info = resp.json()
-
-        email   = user_info.get('email')
+        resp = google_oauth.get('/oauth2/v2/userinfo')
+        if not resp.ok:
+            return redirect(url_for('login_page'))
+        user_info = resp.json()
+        email   = user_info.get('email', '')
         name    = user_info.get('name', email)
         picture = user_info.get('picture', '')
-
         with get_db() as db:
             db.execute('''INSERT INTO users (email, name, picture, last_seen)
                           VALUES (?, ?, ?, datetime('now'))
                           ON CONFLICT(email) DO UPDATE SET
                           name=excluded.name, picture=excluded.picture,
                           last_seen=datetime('now')''', (email, name, picture))
-            db.execute('''INSERT INTO sessions (user_email, login_at)
-                          VALUES (?, datetime('now'))''', (email,))
+            db.execute('INSERT INTO sessions (user_email) VALUES (?)', (email,))
             db.commit()
-
         session['user'] = {'email': email, 'name': name, 'picture': picture}
         session['session_start'] = int(time.time())
         session['session_scans'] = 0
-
         return redirect(url_for('index'))
     except Exception as e:
-        return redirect(url_for('login'))
+        return redirect(url_for('login_page'))
 
 @app.route('/logout')
 def logout():
@@ -396,11 +386,11 @@ def logout():
                           duration=?, scans_in_session=?
                           WHERE user_email=? AND logout_at IS NULL''',
                        (duration, scans, user['email']))
-            db.execute('''UPDATE users SET total_time=total_time+?
-                          WHERE email=?''', (duration, user['email']))
+            db.execute('UPDATE users SET total_time=total_time+? WHERE email=?',
+                       (duration, user['email']))
             db.commit()
     session.clear()
-    return redirect(url_for('login'))
+    return redirect(url_for('login_page'))
 
 # ================================================================
 # ROUTES PRINCIPALES
@@ -419,42 +409,30 @@ def scan():
     files = request.files.getlist('files')
     if not files:
         return jsonify({'error': 'Aucun fichier recu'}), 400
-
     all_results = []
     for f in files:
         if not f.filename: continue
-        results = extract_and_scan(f)
-        all_results.extend(results)
-
+        all_results.extend(extract_and_scan(f))
     threats  = [r for r in all_results if r.get('findings')]
     critical = sum(1 for r in all_results if r.get('risk_level') == 'CRITICAL')
     medium   = sum(1 for r in all_results if r.get('risk_level') == 'MEDIUM')
     low      = sum(1 for r in all_results if r.get('risk_level') == 'LOW')
-
     user = session.get('user')
     if user:
         session['session_scans'] = session.get('session_scans', 0) + 1
         with get_db() as db:
             db.execute('UPDATE users SET scan_count=scan_count+1 WHERE email=?', (user['email'],))
-            db.execute('''INSERT INTO scan_logs (user_email, files_count, threats_found, critical_count)
-                          VALUES (?, ?, ?, ?)''', (user['email'], len(all_results), len(threats), critical))
+            db.execute('INSERT INTO scan_logs (user_email, files_count, threats_found, critical_count) VALUES (?,?,?,?)',
+                       (user['email'], len(all_results), len(threats), critical))
             db.commit()
-
     return jsonify({
         'results': all_results,
-        'stats': {
-            'scanned': len(all_results),
-            'threats': len(threats),
-            'critical': critical,
-            'medium':   medium,
-            'low':      low,
-            'clean':    len(all_results) - len(threats)
-        },
+        'stats': {'scanned': len(all_results), 'threats': len(threats), 'critical': critical, 'medium': medium, 'low': low, 'clean': len(all_results)-len(threats)},
         'date': datetime.now().strftime('%d/%m/%Y %H:%M:%S')
     })
 
 # ================================================================
-# ADMIN DASHBOARD
+# ADMIN
 # ================================================================
 
 @app.route('/admin')
@@ -462,48 +440,18 @@ def scan():
 @admin_required
 def admin():
     with get_db() as db:
-        users = db.execute('''
-            SELECT u.*, COUNT(s.id) as session_count,
-                   SUM(s.scans_in_session) as total_scans_sessions
-            FROM users u
-            LEFT JOIN sessions s ON s.user_email = u.email
-            GROUP BY u.email
-            ORDER BY u.last_seen DESC
-        ''').fetchall()
-
-        sessions_list = db.execute('''
-            SELECT s.*, u.name
-            FROM sessions s
-            LEFT JOIN users u ON u.email = s.user_email
-            ORDER BY s.login_at DESC
-            LIMIT 50
-        ''').fetchall()
-
-        scan_logs = db.execute('''
-            SELECT sl.*, u.name
-            FROM scan_logs sl
-            LEFT JOIN users u ON u.email = sl.user_email
-            ORDER BY sl.scanned_at DESC
-            LIMIT 50
-        ''').fetchall()
-
-        total_users  = db.execute('SELECT COUNT(*) FROM users').fetchone()[0]
-        total_scans  = db.execute('SELECT SUM(scan_count) FROM users').fetchone()[0] or 0
+        users = db.execute('''SELECT u.*, COUNT(s.id) as session_count FROM users u LEFT JOIN sessions s ON s.user_email=u.email GROUP BY u.email ORDER BY u.last_seen DESC''').fetchall()
+        sessions_list = db.execute('''SELECT s.*, u.name FROM sessions s LEFT JOIN users u ON u.email=s.user_email ORDER BY s.login_at DESC LIMIT 50''').fetchall()
+        scan_logs = db.execute('''SELECT sl.*, u.name FROM scan_logs sl LEFT JOIN users u ON u.email=sl.user_email ORDER BY sl.scanned_at DESC LIMIT 50''').fetchall()
+        total_users   = db.execute('SELECT COUNT(*) FROM users').fetchone()[0]
+        total_scans   = db.execute('SELECT SUM(scan_count) FROM users').fetchone()[0] or 0
         total_threats = db.execute('SELECT SUM(threats_found) FROM scan_logs').fetchone()[0] or 0
-
-    return render_template('admin.html',
-        users=users,
-        sessions_list=sessions_list,
-        scan_logs=scan_logs,
-        total_users=total_users,
-        total_scans=total_scans,
-        total_threats=total_threats,
-        admin_user=session.get('user')
-    )
+    return render_template('admin.html', users=users, sessions_list=sessions_list, scan_logs=scan_logs,
+        total_users=total_users, total_scans=total_scans, total_threats=total_threats, admin_user=session.get('user'))
 
 @app.route('/health')
 def health():
-    return jsonify({'status': 'ok', 'version': '6.3', 'rar_support': RAR_SUPPORT})
+    return jsonify({'status': 'ok', 'version': '6.3'})
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
