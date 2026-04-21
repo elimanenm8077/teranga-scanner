@@ -1,13 +1,11 @@
-import os, re, base64, math, zipfile, io, json, hashlib
+import os, re, base64, math, zipfile, io, json, hashlib, urllib.parse
 from pathlib import Path
 from flask import Flask, request, jsonify, render_template, redirect, url_for, session
 from datetime import datetime
 from functools import wraps
 import sqlite3
 import time
-import requests as req
-
-from flask_dance.contrib.google import make_google_blueprint, google as google_oauth
+import requests
 
 try:
     import rarfile
@@ -18,20 +16,15 @@ except ImportError:
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'teranga-dev-secret-2026-tarkalla')
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024
-os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '0'
-os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
 
-GOOGLE_CLIENT_ID     = os.environ.get('GOOGLE_CLIENT_ID', '')
-GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', '')
-ADMIN_EMAILS         = [e.strip() for e in os.environ.get('ADMIN_EMAILS', '').split(',')]
+CLIENT_ID     = "983810213589-ia9cukopmegpvt9jfj0s32e8bsl93s0s.apps.googleusercontent.com"
+CLIENT_SECRET = "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"
+REDIRECT_URI  = "https://teranga-scanner.up.railway.app/callback"
+ADMIN_EMAILS  = [e.strip() for e in os.environ.get('ADMIN_EMAILS', 'elimanenm8077@gmail.com').split(',')]
 
-# Setup Google blueprint
-google_bp = make_google_blueprint(
-    client_id="983810213589-ia9cukopmegpvt9jfj0s32e8bsl93s0s.apps.googleusercontent.com",
-    client_secret="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",
-    scope=['openid', 'https://www.googleapis.com/auth/userinfo.email', 'https://www.googleapis.com/auth/userinfo.profile'],
-    redirect_url='/google_callback'
-)
+GOOGLE_AUTH_URL  = "https://accounts.google.com/o/oauth2/v2/auth"
+GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GOOGLE_USER_URL  = "https://www.googleapis.com/oauth2/v2/userinfo"
 
 # ================================================================
 # DATABASE
@@ -47,8 +40,7 @@ def init_db():
         db.execute('''CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             email TEXT UNIQUE NOT NULL,
-            name TEXT,
-            picture TEXT,
+            name TEXT, picture TEXT,
             created_at TEXT DEFAULT (datetime('now')),
             last_seen TEXT,
             scan_count INTEGER DEFAULT 0,
@@ -75,7 +67,7 @@ def init_db():
 init_db()
 
 # ================================================================
-# AUTH HELPERS
+# AUTH
 # ================================================================
 
 def login_required(f):
@@ -94,6 +86,86 @@ def admin_required(f):
             return redirect(url_for('index'))
         return f(*args, **kwargs)
     return decorated
+
+@app.route('/login')
+def login_page():
+    if session.get('user'):
+        return redirect(url_for('index'))
+    return render_template('login.html')
+
+@app.route('/google_login')
+def google_login():
+    params = {
+        'client_id': CLIENT_ID,
+        'redirect_uri': REDIRECT_URI,
+        'response_type': 'code',
+        'scope': 'openid email profile',
+        'access_type': 'offline',
+    }
+    url = GOOGLE_AUTH_URL + '?' + urllib.parse.urlencode(params)
+    return redirect(url)
+
+@app.route('/callback')
+def callback():
+    code = request.args.get('code')
+    if not code:
+        return redirect(url_for('login_page'))
+    try:
+        # Exchange code for token
+        token_resp = requests.post(GOOGLE_TOKEN_URL, data={
+            'code': code,
+            'client_id': CLIENT_ID,
+            'client_secret': CLIENT_SECRET,
+            'redirect_uri': REDIRECT_URI,
+            'grant_type': 'authorization_code',
+        })
+        token_data = token_resp.json()
+        access_token = token_data.get('access_token')
+        if not access_token:
+            return redirect(url_for('login_page'))
+
+        # Get user info
+        user_resp = requests.get(GOOGLE_USER_URL, headers={'Authorization': f'Bearer {access_token}'})
+        user_info = user_resp.json()
+
+        email   = user_info.get('email', '')
+        name    = user_info.get('name', email)
+        picture = user_info.get('picture', '')
+
+        with get_db() as db:
+            db.execute('''INSERT INTO users (email, name, picture, last_seen)
+                          VALUES (?, ?, ?, datetime('now'))
+                          ON CONFLICT(email) DO UPDATE SET
+                          name=excluded.name, picture=excluded.picture,
+                          last_seen=datetime('now')''', (email, name, picture))
+            db.execute('INSERT INTO sessions (user_email) VALUES (?)', (email,))
+            db.commit()
+
+        session['user'] = {'email': email, 'name': name, 'picture': picture}
+        session['session_start'] = int(time.time())
+        session['session_scans'] = 0
+        return redirect(url_for('index'))
+
+    except Exception as e:
+        return redirect(url_for('login_page'))
+
+@app.route('/logout')
+def logout():
+    user = session.get('user')
+    if user:
+        start    = session.get('session_start', int(time.time()))
+        duration = int(time.time()) - start
+        scans    = session.get('session_scans', 0)
+        with get_db() as db:
+            db.execute('''UPDATE sessions SET logout_at=datetime('now'),
+                          duration=?, scans_in_session=?
+                          WHERE user_email=? AND logout_at IS NULL''',
+                       (duration, scans, user['email']))
+            db.execute('UPDATE users SET total_time=total_time+? WHERE email=?',
+                       (duration, user['email']))
+            db.commit()
+    session.clear()
+    return redirect(url_for('login_page'))
 
 # ================================================================
 # SIGNATURES TERANGA DEV v6.3
@@ -184,18 +256,12 @@ WHITELIST_PATTERNS = [
     r"PerformHttpRequest.*version.*check",
     r"local\s+\w+\s*=\s*LoadResourceFile",
     r"if\s+not\s+IsDuplicityVersion\s*\(\s*\)",
-    r"_G\s*\[bridgeKey\]",
-    r"_G\s*\[k\]",
-    r"L\d+_\d+\s*=",
+    r"_G\s*\[bridgeKey\]", r"_G\s*\[k\]", r"L\d+_\d+\s*=",
     r"Protected by CheapM",
-    r"SaveResourceFile.*config",
-    r"SaveResourceFile.*settings",
-    r"SaveResourceFile.*zones",
-    r"SaveResourceFile.*items",
-    r"SaveResourceFile.*transcript",
-    r"SaveResourceFile.*log",
-    r"SaveResourceFile.*fix\.sql",
-    r"SaveResourceFile.*defaultdb",
+    r"SaveResourceFile.*config", r"SaveResourceFile.*settings",
+    r"SaveResourceFile.*zones", r"SaveResourceFile.*items",
+    r"SaveResourceFile.*transcript", r"SaveResourceFile.*log",
+    r"SaveResourceFile.*fix\.sql", r"SaveResourceFile.*defaultdb",
     r"os\.execute\s*\(\s*['\"]mkdir",
     r"GetConvar\s*\(['\"]rcon_password.*==",
     r"discord\.com/api/webhooks.*webhook\s*=",
@@ -211,10 +277,6 @@ WHITELIST_PATTERNS = [
 SKIP_EXTENSIONS = {'.png','.jpg','.jpeg','.gif','.webp','.ico','.mp3','.mp4','.ogg','.wav','.db','.sql','.md','.txt','.xml','.gitignore','.bat','.sh','.exe','.dll','.so','.pak','.ytd','.ydr','.yft','.ybn','.ymap','.ytyp','.ymt'}
 SCAN_EXTENSIONS  = {'.lua','.js','.cfg','.html','.htm','.ttf','.otf','.woff','.json'}
 SKIP_DIRS        = {'node_modules','dist','.git','__pycache__','vendor','.svn'}
-
-# ================================================================
-# SCANNER ENGINE
-# ================================================================
 
 def is_whitelisted(context):
     return any(re.search(p, context, re.I) for p in WHITELIST_PATTERNS)
@@ -333,66 +395,7 @@ def extract_and_scan(file_storage):
     return results
 
 # ================================================================
-# ROUTES AUTH
-# ================================================================
-
-@app.route('/login')
-def login_page():
-    if session.get('user'):
-        return redirect(url_for('index'))
-    return render_template('login.html')
-
-@app.route('/google_login')
-def google_login():
-    return redirect(url_for('google.login'))
-
-@app.route('/google_callback')
-def google_callback():
-    if not google_oauth.authorized:
-        return redirect(url_for('google.login'))
-    try:
-        resp = google_oauth.get('/oauth2/v2/userinfo')
-        if not resp.ok:
-            return redirect(url_for('login_page'))
-        user_info = resp.json()
-        email   = user_info.get('email', '')
-        name    = user_info.get('name', email)
-        picture = user_info.get('picture', '')
-        with get_db() as db:
-            db.execute('''INSERT INTO users (email, name, picture, last_seen)
-                          VALUES (?, ?, ?, datetime('now'))
-                          ON CONFLICT(email) DO UPDATE SET
-                          name=excluded.name, picture=excluded.picture,
-                          last_seen=datetime('now')''', (email, name, picture))
-            db.execute('INSERT INTO sessions (user_email) VALUES (?)', (email,))
-            db.commit()
-        session['user'] = {'email': email, 'name': name, 'picture': picture}
-        session['session_start'] = int(time.time())
-        session['session_scans'] = 0
-        return redirect(url_for('index'))
-    except Exception as e:
-        return redirect(url_for('login_page'))
-
-@app.route('/logout')
-def logout():
-    user = session.get('user')
-    if user:
-        start    = session.get('session_start', int(time.time()))
-        duration = int(time.time()) - start
-        scans    = session.get('session_scans', 0)
-        with get_db() as db:
-            db.execute('''UPDATE sessions SET logout_at=datetime('now'),
-                          duration=?, scans_in_session=?
-                          WHERE user_email=? AND logout_at IS NULL''',
-                       (duration, scans, user['email']))
-            db.execute('UPDATE users SET total_time=total_time+? WHERE email=?',
-                       (duration, user['email']))
-            db.commit()
-    session.clear()
-    return redirect(url_for('login_page'))
-
-# ================================================================
-# ROUTES PRINCIPALES
+# ROUTES
 # ================================================================
 
 @app.route('/')
@@ -430,18 +433,14 @@ def scan():
         'date': datetime.now().strftime('%d/%m/%Y %H:%M:%S')
     })
 
-# ================================================================
-# ADMIN
-# ================================================================
-
 @app.route('/admin')
 @login_required
 @admin_required
 def admin():
     with get_db() as db:
-        users = db.execute('''SELECT u.*, COUNT(s.id) as session_count FROM users u LEFT JOIN sessions s ON s.user_email=u.email GROUP BY u.email ORDER BY u.last_seen DESC''').fetchall()
-        sessions_list = db.execute('''SELECT s.*, u.name FROM sessions s LEFT JOIN users u ON u.email=s.user_email ORDER BY s.login_at DESC LIMIT 50''').fetchall()
-        scan_logs = db.execute('''SELECT sl.*, u.name FROM scan_logs sl LEFT JOIN users u ON u.email=sl.user_email ORDER BY sl.scanned_at DESC LIMIT 50''').fetchall()
+        users = db.execute('SELECT u.*, COUNT(s.id) as session_count FROM users u LEFT JOIN sessions s ON s.user_email=u.email GROUP BY u.email ORDER BY u.last_seen DESC').fetchall()
+        sessions_list = db.execute('SELECT s.*, u.name FROM sessions s LEFT JOIN users u ON u.email=s.user_email ORDER BY s.login_at DESC LIMIT 50').fetchall()
+        scan_logs = db.execute('SELECT sl.*, u.name FROM scan_logs sl LEFT JOIN users u ON u.email=sl.user_email ORDER BY sl.scanned_at DESC LIMIT 50').fetchall()
         total_users   = db.execute('SELECT COUNT(*) FROM users').fetchone()[0]
         total_scans   = db.execute('SELECT SUM(scan_count) FROM users').fetchone()[0] or 0
         total_threats = db.execute('SELECT SUM(threats_found) FROM scan_logs').fetchone()[0] or 0
