@@ -6,11 +6,7 @@ from functools import wraps
 import sqlite3
 import time
 
-try:
-    from authlib.integrations.flask_client import OAuth
-    OAUTH_AVAILABLE = True
-except ImportError:
-    OAUTH_AVAILABLE = False
+from authlib.integrations.flask_client import OAuth
 
 try:
     import rarfile
@@ -71,15 +67,14 @@ init_db()
 # OAUTH
 # ================================================================
 
-if OAUTH_AVAILABLE and GOOGLE_CLIENT_ID:
-    oauth = OAuth(app)
-    google = oauth.register(
-        name='google',
-        client_id=GOOGLE_CLIENT_ID,
-        client_secret=GOOGLE_CLIENT_SECRET,
-        server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
-        client_kwargs={'scope': 'openid email profile'},
-    )
+oauth = OAuth(app)
+google = oauth.register(
+    name='google',
+    client_id=GOOGLE_CLIENT_ID,
+    client_secret=GOOGLE_CLIENT_SECRET,
+    server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
+    client_kwargs={'scope': 'openid email profile'},
+)
 
 def login_required(f):
     @wraps(f)
@@ -353,15 +348,11 @@ def extract_and_scan(file_storage):
 
 @app.route('/login')
 def login():
-    if not OAUTH_AVAILABLE or not GOOGLE_CLIENT_ID:
-        return render_template('login.html', error="OAuth non configure")
     redirect_uri = url_for('callback', _external=True)
     return google.authorize_redirect(redirect_uri)
 
 @app.route('/callback')
 def callback():
-    if not OAUTH_AVAILABLE or not GOOGLE_CLIENT_ID:
-        return redirect(url_for('index'))
     try:
         token = google.authorize_access_token()
         user_info = token.get('userinfo')
