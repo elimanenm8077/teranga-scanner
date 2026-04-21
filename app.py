@@ -589,7 +589,13 @@ def unban_user():
     ph = '%s' if (POSTGRES and DATABASE_URL) else '?'
     db_execute(f'UPDATE users SET banned=0 WHERE email={ph}', (email,))
     return jsonify({'success': True})
-
+@app.route('/debug')
+def debug():
+    return jsonify({
+        'db_url': bool(DATABASE_URL),
+        'postgres': POSTGRES,
+        'db_url_preview': DATABASE_URL[:30] if DATABASE_URL else 'VIDE'
+    })
 @app.route('/health')
 def health():
     return jsonify({'status': 'ok', 'version': '6.4', 'ai': bool(ANTHROPIC_API_KEY)})
