@@ -19,7 +19,7 @@ app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024
 
 CLIENT_ID     = "983810213589-ia9cukopmegpvt9jfj0s32e8bsl93s0s.apps.googleusercontent.com"
 CLIENT_SECRET = "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"
-REDIRECT_URI  = "https://teranga-scanner.up.railway.app/callback"
+REDIRECT_URI  = "https://teranga-scanner.onrender.com/callback"
 ADMIN_EMAILS  = [e.strip() for e in os.environ.get('ADMIN_EMAILS', 'elimanenm8077@gmail.com').split(',')]
 
 GOOGLE_AUTH_URL  = "https://accounts.google.com/o/oauth2/v2/auth"
