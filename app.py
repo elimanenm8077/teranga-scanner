@@ -80,6 +80,13 @@ def login_required(f):
     def decorated(*args, **kwargs):
         if not session.get('user'):
             return redirect(url_for('login_page'))
+        # Vérifie si banni à chaque requête
+        email = session['user'].get('email')
+        with get_db() as db:
+            u = db.execute('SELECT banned FROM users WHERE email=?', (email,)).fetchone()
+            if u and u['banned']:
+                session.clear()
+                return redirect(url_for('login_page'))
         return f(*args, **kwargs)
     return decorated
 
