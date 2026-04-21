@@ -192,8 +192,10 @@ td { padding: 12px 16px; vertical-align: middle; }
           <td>
             {% if s.logout_at %}
             <span class="dim">{{ s.logout_at[:16] }}</span>
-            {% else %}
+            {% elif s.login_at and s.login_at[:16] == s.last_activity[:16] %}
             <span style="color:var(--grn)"><span class="online-dot"></span>En ligne</span>
+            {% else %}
+            <span class="dim">—</span>
             {% endif %}
           </td>
           <td>
