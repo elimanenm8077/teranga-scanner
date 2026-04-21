@@ -427,7 +427,7 @@ def ai_analyze():
         return jsonify({'error': 'Contenu manquant'}), 400
 
     # Limite le contenu pour éviter des tokens excessifs
-    content_preview = content[:3000] if len(content) > 3000 else content
+    content_preview = content[:6000] if len(content) > 6000 else content
 
     findings_text = '\n'.join([
         f"- Ligne {f.get('line')}: [{f.get('category')}] {f.get('description')} — `{f.get('pattern','')[:80]}`"
@@ -468,7 +468,7 @@ Réponds en JSON avec ce format exact :
             },
             json={
                 'model': 'claude-sonnet-4-6',
-                'max_tokens': 4000,
+                'max_tokens': 8000,
                 'messages': [{'role': 'user', 'content': prompt}]
             },
             timeout=60
