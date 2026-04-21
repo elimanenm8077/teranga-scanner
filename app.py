@@ -24,16 +24,16 @@ app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'teranga-dev-secret-2026-tarkalla')
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024
 
-CLIENT_ID     = "983810213589-ia9cukopmegpvt9jfj0s32e8bsl93s0s.apps.googleusercontent.com"
-CLIENT_SECRET = "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"
-REDIRECT_URI  = "https://teranga-scanner.onrender.com/callback"
-ADMIN_EMAILS  = [e.strip() for e in os.environ.get('ADMIN_EMAILS', 'elimanenm8077@gmail.com').split(',')]
+CLIENT_ID        = "983810213589-ia9cukopmegpvt9jfj0s32e8bsl93s0s.apps.googleusercontent.com"
+CLIENT_SECRET    = "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"
+REDIRECT_URI     = "https://teranga-scanner.onrender.com/callback"
+ADMIN_EMAILS     = [e.strip() for e in os.environ.get('ADMIN_EMAILS', 'elimanenm8077@gmail.com').split(',')]
+ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
 
 GOOGLE_AUTH_URL  = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_USER_URL  = "https://www.googleapis.com/oauth2/v2/userinfo"
-
-DATABASE_URL = os.environ.get('DATABASE_URL', '')
+DATABASE_URL     = os.environ.get('DATABASE_URL', '')
 
 # ================================================================
 # DATABASE
@@ -41,8 +41,7 @@ DATABASE_URL = os.environ.get('DATABASE_URL', '')
 
 def get_db():
     if POSTGRES and DATABASE_URL:
-        conn = psycopg2.connect(DATABASE_URL)
-        return conn
+        return psycopg2.connect(DATABASE_URL)
     else:
         import sqlite3
         conn = sqlite3.connect('/tmp/scanner.db')
@@ -54,65 +53,42 @@ def init_db():
     cur = conn.cursor()
     if POSTGRES and DATABASE_URL:
         cur.execute('''CREATE TABLE IF NOT EXISTS users (
-            id SERIAL PRIMARY KEY,
-            email TEXT UNIQUE NOT NULL,
-            name TEXT, picture TEXT,
-            created_at TIMESTAMP DEFAULT NOW(),
-            last_seen TIMESTAMP,
-            scan_count INTEGER DEFAULT 0,
-            total_time INTEGER DEFAULT 0,
-            banned INTEGER DEFAULT 0
+            id SERIAL PRIMARY KEY, email TEXT UNIQUE NOT NULL,
+            name TEXT, picture TEXT, created_at TIMESTAMP DEFAULT NOW(),
+            last_seen TIMESTAMP, scan_count INTEGER DEFAULT 0,
+            total_time INTEGER DEFAULT 0, banned INTEGER DEFAULT 0
         )''')
         cur.execute('''CREATE TABLE IF NOT EXISTS sessions (
-            id SERIAL PRIMARY KEY,
-            user_email TEXT,
-            login_at TIMESTAMP DEFAULT NOW(),
-            logout_at TIMESTAMP,
-            duration INTEGER DEFAULT 0,
-            scans_in_session INTEGER DEFAULT 0
+            id SERIAL PRIMARY KEY, user_email TEXT,
+            login_at TIMESTAMP DEFAULT NOW(), logout_at TIMESTAMP,
+            duration INTEGER DEFAULT 0, scans_in_session INTEGER DEFAULT 0
         )''')
         cur.execute('''CREATE TABLE IF NOT EXISTS scan_logs (
-            id SERIAL PRIMARY KEY,
-            user_email TEXT,
-            scanned_at TIMESTAMP DEFAULT NOW(),
-            files_count INTEGER,
-            threats_found INTEGER,
-            critical_count INTEGER
+            id SERIAL PRIMARY KEY, user_email TEXT,
+            scanned_at TIMESTAMP DEFAULT NOW(), files_count INTEGER,
+            threats_found INTEGER, critical_count INTEGER
         )''')
     else:
-        import sqlite3
+        import sqlite3 as sl
         cur.execute('''CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            email TEXT UNIQUE NOT NULL,
-            name TEXT, picture TEXT,
-            created_at TEXT DEFAULT (datetime('now')),
-            last_seen TEXT,
-            scan_count INTEGER DEFAULT 0,
-            total_time INTEGER DEFAULT 0,
-            banned INTEGER DEFAULT 0
+            id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT UNIQUE NOT NULL,
+            name TEXT, picture TEXT, created_at TEXT DEFAULT (datetime('now')),
+            last_seen TEXT, scan_count INTEGER DEFAULT 0,
+            total_time INTEGER DEFAULT 0, banned INTEGER DEFAULT 0
         )''')
-        try:
-            cur.execute('ALTER TABLE users ADD COLUMN banned INTEGER DEFAULT 0')
+        try: cur.execute('ALTER TABLE users ADD COLUMN banned INTEGER DEFAULT 0')
         except: pass
         cur.execute('''CREATE TABLE IF NOT EXISTS sessions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_email TEXT,
-            login_at TEXT DEFAULT (datetime('now')),
-            logout_at TEXT,
-            duration INTEGER DEFAULT 0,
-            scans_in_session INTEGER DEFAULT 0
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_email TEXT,
+            login_at TEXT DEFAULT (datetime('now')), logout_at TEXT,
+            duration INTEGER DEFAULT 0, scans_in_session INTEGER DEFAULT 0
         )''')
         cur.execute('''CREATE TABLE IF NOT EXISTS scan_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_email TEXT,
-            scanned_at TEXT DEFAULT (datetime('now')),
-            files_count INTEGER,
-            threats_found INTEGER,
-            critical_count INTEGER
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_email TEXT,
+            scanned_at TEXT DEFAULT (datetime('now')), files_count INTEGER,
+            threats_found INTEGER, critical_count INTEGER
         )''')
-    conn.commit()
-    cur.close()
-    conn.close()
+    conn.commit(); cur.close(); conn.close()
 
 init_db()
 
@@ -120,11 +96,7 @@ def db_execute(query, params=(), fetchone=False, fetchall=False):
     conn = get_db()
     if POSTGRES and DATABASE_URL:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        # Convert SQLite ? placeholders to PostgreSQL %s
-        query = query.replace('?', '%s')
-        # Convert SQLite datetime functions
-        query = query.replace("datetime('now')", "NOW()")
-        query = query.replace("ON CONFLICT(email) DO UPDATE SET", "ON CONFLICT (email) DO UPDATE SET")
+        query = query.replace('?', '%s').replace("datetime('now')", "NOW()")
     else:
         cur = conn.cursor()
     try:
@@ -132,24 +104,16 @@ def db_execute(query, params=(), fetchone=False, fetchall=False):
         result = None
         if fetchone:
             row = cur.fetchone()
-            if row and POSTGRES:
-                result = dict(row)
-            else:
-                result = row
+            result = dict(row) if (row and POSTGRES and DATABASE_URL) else row
         elif fetchall:
             rows = cur.fetchall()
-            if rows and POSTGRES:
-                result = [dict(r) for r in rows]
-            else:
-                result = rows
+            result = [dict(r) for r in rows] if (rows and POSTGRES and DATABASE_URL) else rows
         conn.commit()
         return result
     except Exception as e:
-        conn.rollback()
-        raise e
+        conn.rollback(); raise e
     finally:
-        cur.close()
-        conn.close()
+        cur.close(); conn.close()
 
 # ================================================================
 # AUTH
@@ -162,8 +126,8 @@ def login_required(f):
             return redirect(url_for('login_page'))
         email = session['user'].get('email')
         try:
-            u = db_execute('SELECT banned FROM users WHERE email=%s' if (POSTGRES and DATABASE_URL) else 'SELECT banned FROM users WHERE email=?',
-                          (email,), fetchone=True)
+            ph = '%s' if (POSTGRES and DATABASE_URL) else '?'
+            u = db_execute(f'SELECT banned FROM users WHERE email={ph}', (email,), fetchone=True)
             if u and (u['banned'] if isinstance(u, dict) else u[0]):
                 session.clear()
                 return redirect(url_for('login_page'))
@@ -188,89 +152,64 @@ def login_page():
 
 @app.route('/google_login')
 def google_login():
-    params = {
-        'client_id': CLIENT_ID,
-        'redirect_uri': REDIRECT_URI,
-        'response_type': 'code',
-        'scope': 'openid email profile',
-        'access_type': 'offline',
-    }
-    url = GOOGLE_AUTH_URL + '?' + urllib.parse.urlencode(params)
-    return redirect(url)
+    params = {'client_id': CLIENT_ID, 'redirect_uri': REDIRECT_URI,
+              'response_type': 'code', 'scope': 'openid email profile', 'access_type': 'offline'}
+    return redirect(GOOGLE_AUTH_URL + '?' + urllib.parse.urlencode(params))
 
 @app.route('/callback')
 def callback():
     code = request.args.get('code')
-    if not code:
-        return redirect(url_for('login_page'))
+    if not code: return redirect(url_for('login_page'))
     try:
         token_resp = requests.post(GOOGLE_TOKEN_URL, data={
-            'code': code,
-            'client_id': CLIENT_ID,
-            'client_secret': CLIENT_SECRET,
-            'redirect_uri': REDIRECT_URI,
-            'grant_type': 'authorization_code',
-        })
+            'code': code, 'client_id': CLIENT_ID, 'client_secret': CLIENT_SECRET,
+            'redirect_uri': REDIRECT_URI, 'grant_type': 'authorization_code'})
         token_data = token_resp.json()
         access_token = token_data.get('access_token')
-        if not access_token:
-            return redirect(url_for('login_page'))
-
+        if not access_token: return redirect(url_for('login_page'))
         user_resp = requests.get(GOOGLE_USER_URL, headers={'Authorization': f'Bearer {access_token}'})
         user_info = user_resp.json()
-        email   = user_info.get('email', '')
-        name    = user_info.get('name', email)
+        email = user_info.get('email', '')
+        name = user_info.get('name', email)
         picture = user_info.get('picture', '')
-
-        # Check if banned
-        existing = db_execute('SELECT banned FROM users WHERE email=%s' if (POSTGRES and DATABASE_URL) else 'SELECT banned FROM users WHERE email=?',
-                              (email,), fetchone=True)
+        ph = '%s' if (POSTGRES and DATABASE_URL) else '?'
+        existing = db_execute(f'SELECT banned FROM users WHERE email={ph}', (email,), fetchone=True)
         if existing and (existing['banned'] if isinstance(existing, dict) else existing[0]):
-            return render_template('login.html', error="Votre compte a été banni. Contactez l'administrateur.")
-
+            return render_template('login.html', error="Votre compte a été banni.")
         if POSTGRES and DATABASE_URL:
-            db_execute('''INSERT INTO users (email, name, picture, last_seen)
-                          VALUES (%s, %s, %s, NOW())
-                          ON CONFLICT (email) DO UPDATE SET
-                          name=EXCLUDED.name, picture=EXCLUDED.picture, last_seen=NOW()''',
+            db_execute('''INSERT INTO users (email, name, picture, last_seen) VALUES (%s,%s,%s,NOW())
+                          ON CONFLICT (email) DO UPDATE SET name=EXCLUDED.name, picture=EXCLUDED.picture, last_seen=NOW()''',
                        (email, name, picture))
         else:
-            db_execute('''INSERT INTO users (email, name, picture, last_seen)
-                          VALUES (?, ?, ?, datetime('now'))
-                          ON CONFLICT(email) DO UPDATE SET
-                          name=excluded.name, picture=excluded.picture,
-                          last_seen=datetime('now')''', (email, name, picture))
-
-        db_execute('INSERT INTO sessions (user_email) VALUES (%s)' if (POSTGRES and DATABASE_URL) else 'INSERT INTO sessions (user_email) VALUES (?)',
-                   (email,))
-
+            db_execute('''INSERT INTO users (email, name, picture, last_seen) VALUES (?,?,?,datetime('now'))
+                          ON CONFLICT(email) DO UPDATE SET name=excluded.name, picture=excluded.picture, last_seen=datetime('now')''',
+                       (email, name, picture))
+        db_execute(f'INSERT INTO sessions (user_email) VALUES ({ph})', (email,))
         session['user'] = {'email': email, 'name': name, 'picture': picture}
         session['session_start'] = int(time.time())
         session['session_scans'] = 0
         return redirect(url_for('index'))
-
-    except Exception as e:
-        return redirect(url_for('login_page'))
+    except: return redirect(url_for('login_page'))
 
 @app.route('/logout')
 def logout():
     user = session.get('user')
     if user:
-        start    = session.get('session_start', int(time.time()))
+        start = session.get('session_start', int(time.time()))
         duration = int(time.time()) - start
-        scans    = session.get('session_scans', 0)
+        scans = session.get('session_scans', 0)
         ph = '%s' if (POSTGRES and DATABASE_URL) else '?'
-        db_execute(f'''UPDATE sessions SET logout_at={'NOW()' if (POSTGRES and DATABASE_URL) else "datetime('now)"},
-                      duration={ph}, scans_in_session={ph}
-                      WHERE user_email={ph} AND logout_at IS NULL''',
-                   (duration, scans, user['email']))
-        db_execute(f'UPDATE users SET total_time=total_time+{ph} WHERE email={ph}',
-                   (duration, user['email']))
+        now = 'NOW()' if (POSTGRES and DATABASE_URL) else "datetime('now')"
+        try:
+            db_execute(f"UPDATE sessions SET logout_at={now}, duration={ph}, scans_in_session={ph} WHERE user_email={ph} AND logout_at IS NULL",
+                       (duration, scans, user['email']))
+            db_execute(f'UPDATE users SET total_time=total_time+{ph} WHERE email={ph}', (duration, user['email']))
+        except: pass
     session.clear()
     return redirect(url_for('login_page'))
 
 # ================================================================
-# SIGNATURES TERANGA DEV v6.3
+# SIGNATURES v6.3
 # ================================================================
 
 SIGNATURES_LUA = {
@@ -347,11 +286,7 @@ SIGNATURES_NUI = {
     ]
 }
 
-SIGNATURES_CFG = {
-    "CFG": [
-        (r"exec\s+https?://", 5, "Config distante"),
-    ]
-}
+SIGNATURES_CFG = {"CFG": [(r"exec\s+https?://", 5, "Config distante")]}
 
 WHITELIST_PATTERNS = [
     r"discord\.com/api/webhooks.*SendWebhookMessage",
@@ -403,50 +338,32 @@ def check_base64(content):
     return findings
 
 def scan_file(filename, content_bytes):
-    try:
-        content = content_bytes.decode('utf-8', errors='ignore')
-    except:
-        return {"file": filename, "findings": [], "score": 0, "risk_level": "CLEAN"}
-    if len(content) < 30:
-        return {"file": filename, "findings": [], "score": 0, "risk_level": "CLEAN"}
-    ext  = Path(filename).suffix.lower()
+    try: content = content_bytes.decode('utf-8', errors='ignore')
+    except: return {"file": filename, "findings": [], "score": 0, "risk_level": "CLEAN"}
+    if len(content) < 30: return {"file": filename, "findings": [], "score": 0, "risk_level": "CLEAN"}
+    ext = Path(filename).suffix.lower()
     name = Path(filename).name.lower()
-    if name == 'fxmanifest.lua' or ext == '.cfg':
-        sigs = SIGNATURES_CFG
-    elif ext in ('.html', '.htm'):
-        sigs = SIGNATURES_NUI
-    else:
-        sigs = SIGNATURES_LUA
+    if name == 'fxmanifest.lua' or ext == '.cfg': sigs = SIGNATURES_CFG
+    elif ext in ('.html', '.htm'): sigs = SIGNATURES_NUI
+    else: sigs = SIGNATURES_LUA
     lines = content.split('\n')
-    findings = []
-    score = 0
+    findings = []; score = 0
     for cat, patterns in sigs.items():
         for pat, sev, desc in patterns:
             for m in re.finditer(pat, content, re.I | re.M):
                 ln = content[:m.start()].count('\n') + 1
-                ctx_start = max(0, ln - 4)
-                ctx_end   = min(len(lines), ln + 4)
+                ctx_start = max(0, ln - 4); ctx_end = min(len(lines), ln + 4)
                 ctx = '\n'.join(lines[ctx_start:ctx_end]).lower()
                 if is_whitelisted(ctx): continue
                 score += sev
-                findings.append({
-                    "line": ln, "category": cat,
-                    "pattern": m.group()[:150], "severity": sev,
-                    "description": desc,
-                    "context": '\n'.join(
-                        f"{'>>>' if i==ln-1 else '   '} {i+1:4d} | {lines[i].rstrip()}"
-                        for i in range(ctx_start, ctx_end)
-                    )
-                })
-    for f in check_base64(content):
-        score += f['severity']
-        findings.append(f)
+                findings.append({"line": ln, "category": cat, "pattern": m.group()[:150], "severity": sev, "description": desc,
+                    "context": '\n'.join(f"{'>>>' if i==ln-1 else '   '} {i+1:4d} | {lines[i].rstrip()}" for i in range(ctx_start, ctx_end))})
+    for f in check_base64(content): score += f['severity']; findings.append(f)
     ent = entropy(content[:2000])
     if ent > 6.2 and any('EXEC' in f['category'] for f in findings):
-        score += 2
-        findings.append({"line": "ent", "category": "ENTROPIE", "pattern": f"{ent:.2f}/8.0", "severity": 2, "description": "Obfuscation lourde", "context": ""})
+        score += 2; findings.append({"line": "ent", "category": "ENTROPIE", "pattern": f"{ent:.2f}/8.0", "severity": 2, "description": "Obfuscation lourde", "context": ""})
     risk = "CLEAN" if score==0 else "LOW" if score<=3 else "MEDIUM" if score<=7 else "CRITICAL"
-    return {"file": filename, "score": score, "risk_level": risk, "findings": findings, "total_findings": len(findings)}
+    return {"file": filename, "score": score, "risk_level": risk, "findings": findings, "total_findings": len(findings), "content": content}
 
 def should_scan(filename):
     ext = Path(filename).suffix.lower()
@@ -470,11 +387,9 @@ def extract_and_scan(file_storage):
                             data = zf.read(name)
                             if len(data) < 2_000_000:
                                 r = scan_file(name, data)
-                                if r.get('findings') or r.get('score', 0) > 0:
-                                    results.append(r)
+                                if r.get('findings') or r.get('score', 0) > 0: results.append(r)
                         except: pass
-        except Exception as e:
-            results.append({"file": filename, "error": str(e), "findings": [], "score": 0, "risk_level": "ERREUR"})
+        except Exception as e: results.append({"file": filename, "error": str(e), "findings": [], "score": 0, "risk_level": "ERREUR"})
     elif ext == '.rar' and RAR_SUPPORT:
         try:
             rf = rarfile.RarFile(io.BytesIO(content))
@@ -484,20 +399,101 @@ def extract_and_scan(file_storage):
                         data = rf.read(name)
                         if len(data) < 2_000_000:
                             r = scan_file(name, data)
-                            if r.get('findings') or r.get('score', 0) > 0:
-                                results.append(r)
+                            if r.get('findings') or r.get('score', 0) > 0: results.append(r)
                     except: pass
-        except Exception as e:
-            results.append({"file": filename, "error": str(e), "findings": [], "score": 0, "risk_level": "ERREUR"})
+        except Exception as e: results.append({"file": filename, "error": str(e), "findings": [], "score": 0, "risk_level": "ERREUR"})
     else:
         if should_scan(filename):
             r = scan_file(filename, content)
-            if r.get('findings') or r.get('score', 0) > 0:
-                results.append(r)
+            if r.get('findings') or r.get('score', 0) > 0: results.append(r)
     return results
 
 # ================================================================
-# ROUTES
+# AGENT IA CLAUDE
+# ================================================================
+
+@app.route('/ai_analyze', methods=['POST'])
+@login_required
+def ai_analyze():
+    if not ANTHROPIC_API_KEY:
+        return jsonify({'error': 'API Claude non configurée'}), 500
+
+    data = request.get_json()
+    filename = data.get('filename', '')
+    content  = data.get('content', '')
+    findings = data.get('findings', [])
+
+    if not content:
+        return jsonify({'error': 'Contenu manquant'}), 400
+
+    # Limite le contenu pour éviter des tokens excessifs
+    content_preview = content[:3000] if len(content) > 3000 else content
+
+    findings_text = '\n'.join([
+        f"- Ligne {f.get('line')}: [{f.get('category')}] {f.get('description')} — `{f.get('pattern','')[:80]}`"
+        for f in findings[:10]
+    ])
+
+    prompt = f"""Tu es un expert en sécurité FiveM spécialisé dans la détection et le nettoyage de backdoors Lua.
+
+Fichier analysé : `{filename}`
+
+Détections du scanner :
+{findings_text}
+
+Contenu du fichier (extrait) :
+```lua
+{content_preview}
+```
+
+Ta mission :
+1. Explique en français ce que font exactement les backdoors détectés (2-3 phrases max par backdoor)
+2. Fournis le fichier NETTOYÉ complet avec les lignes malveillantes supprimées
+3. Liste les lignes supprimées
+
+Réponds en JSON avec ce format exact :
+{{
+  "analyse": "explication claire des backdoors trouvés",
+  "lignes_supprimees": ["description ligne 1", "description ligne 2"],
+  "fichier_nettoye": "contenu complet du fichier nettoyé"
+}}"""
+
+    try:
+        resp = requests.post(
+            'https://api.anthropic.com/v1/messages',
+            headers={
+                'x-api-key': ANTHROPIC_API_KEY,
+                'anthropic-version': '2023-06-01',
+                'content-type': 'application/json'
+            },
+            json={
+                'model': 'claude-sonnet-4-20250514',
+                'max_tokens': 4000,
+                'messages': [{'role': 'user', 'content': prompt}]
+            },
+            timeout=60
+        )
+        resp_data = resp.json()
+        text = resp_data['content'][0]['text']
+
+        # Parse JSON from response
+        try:
+            # Extract JSON from response
+            json_match = re.search(r'\{.*\}', text, re.DOTALL)
+            if json_match:
+                result = json.loads(json_match.group())
+            else:
+                result = {'analyse': text, 'lignes_supprimees': [], 'fichier_nettoye': content}
+        except:
+            result = {'analyse': text, 'lignes_supprimees': [], 'fichier_nettoye': content}
+
+        return jsonify({'success': True, 'result': result, 'filename': filename})
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# ================================================================
+# ROUTES PRINCIPALES
 # ================================================================
 
 @app.route('/')
@@ -505,18 +501,21 @@ def extract_and_scan(file_storage):
 def index():
     user = session.get('user')
     is_admin = user and user.get('email') in ADMIN_EMAILS
-    return render_template('index.html', rar_support=RAR_SUPPORT, user=user, is_admin=is_admin)
+    ai_enabled = bool(ANTHROPIC_API_KEY)
+    return render_template('index.html', rar_support=RAR_SUPPORT, user=user, is_admin=is_admin, ai_enabled=ai_enabled)
 
 @app.route('/scan', methods=['POST'])
 @login_required
 def scan():
     files = request.files.getlist('files')
-    if not files:
-        return jsonify({'error': 'Aucun fichier recu'}), 400
+    if not files: return jsonify({'error': 'Aucun fichier recu'}), 400
     all_results = []
     for f in files:
         if not f.filename: continue
         all_results.extend(extract_and_scan(f))
+    # Remove content from results to avoid large response
+    for r in all_results:
+        r.pop('content', None)
     threats  = [r for r in all_results if r.get('findings')]
     critical = sum(1 for r in all_results if r.get('risk_level') == 'CRITICAL')
     medium   = sum(1 for r in all_results if r.get('risk_level') == 'MEDIUM')
@@ -525,9 +524,11 @@ def scan():
     if user:
         session['session_scans'] = session.get('session_scans', 0) + 1
         ph = '%s' if (POSTGRES and DATABASE_URL) else '?'
-        db_execute(f'UPDATE users SET scan_count=scan_count+1 WHERE email={ph}', (user['email'],))
-        db_execute(f'INSERT INTO scan_logs (user_email, files_count, threats_found, critical_count) VALUES ({ph},{ph},{ph},{ph})',
-                   (user['email'], len(all_results), len(threats), critical))
+        try:
+            db_execute(f'UPDATE users SET scan_count=scan_count+1 WHERE email={ph}', (user['email'],))
+            db_execute(f'INSERT INTO scan_logs (user_email, files_count, threats_found, critical_count) VALUES ({ph},{ph},{ph},{ph})',
+                       (user['email'], len(all_results), len(threats), critical))
+        except: pass
     return jsonify({
         'results': all_results,
         'stats': {'scanned': len(all_results), 'threats': len(threats), 'critical': critical, 'medium': medium, 'low': low, 'clean': len(all_results)-len(threats)},
@@ -542,27 +543,23 @@ def scan():
 @login_required
 @admin_required
 def admin():
-    ph = '%s' if (POSTGRES and DATABASE_URL) else '?'
-    users = db_execute('SELECT u.*, COUNT(s.id) as session_count FROM users u LEFT JOIN sessions s ON s.user_email=u.email GROUP BY u.id, u.email, u.name, u.picture, u.created_at, u.last_seen, u.scan_count, u.total_time, u.banned ORDER BY u.last_seen DESC NULLS LAST', fetchall=True)
-    sessions_list = db_execute('SELECT s.*, u.name FROM sessions s LEFT JOIN users u ON u.email=s.user_email ORDER BY s.login_at DESC LIMIT 50', fetchall=True)
-    scan_logs = db_execute('SELECT sl.*, u.name FROM scan_logs sl LEFT JOIN users u ON u.email=sl.user_email ORDER BY sl.scanned_at DESC LIMIT 50', fetchall=True)
-    total_users   = db_execute('SELECT COUNT(*) as c FROM users', fetchone=True)
-    total_scans   = db_execute('SELECT SUM(scan_count) as s FROM users', fetchone=True)
-    total_threats = db_execute('SELECT SUM(threats_found) as t FROM scan_logs', fetchone=True)
-
-    def val(r, k):
-        if isinstance(r, dict): return r.get(k) or 0
-        return r[0] if r else 0
-
+    try:
+        users = db_execute('SELECT u.*, COUNT(s.id) as session_count FROM users u LEFT JOIN sessions s ON s.user_email=u.email GROUP BY u.id, u.email, u.name, u.picture, u.created_at, u.last_seen, u.scan_count, u.total_time, u.banned ORDER BY u.last_seen DESC NULLS LAST', fetchall=True)
+        sessions_list = db_execute('SELECT s.*, u.name FROM sessions s LEFT JOIN users u ON u.email=s.user_email ORDER BY s.login_at DESC LIMIT 50', fetchall=True)
+        scan_logs = db_execute('SELECT sl.*, u.name FROM scan_logs sl LEFT JOIN users u ON u.email=sl.user_email ORDER BY sl.scanned_at DESC LIMIT 50', fetchall=True)
+        total_users   = db_execute('SELECT COUNT(*) as c FROM users', fetchone=True)
+        total_scans   = db_execute('SELECT SUM(scan_count) as s FROM users', fetchone=True)
+        total_threats = db_execute('SELECT SUM(threats_found) as t FROM scan_logs', fetchone=True)
+        def val(r, k): return (r.get(k) if isinstance(r, dict) else r[0]) or 0 if r else 0
+    except Exception as e:
+        users = []; sessions_list = []; scan_logs = []
+        total_users = total_scans = total_threats = 0
+        def val(r, k): return 0
     return render_template('admin.html',
-        users=users or [],
-        sessions_list=sessions_list or [],
-        scan_logs=scan_logs or [],
-        total_users=val(total_users, 'c'),
-        total_scans=val(total_scans, 's'),
+        users=users or [], sessions_list=sessions_list or [], scan_logs=scan_logs or [],
+        total_users=val(total_users, 'c'), total_scans=val(total_scans, 's'),
         total_threats=val(total_threats, 't'),
-        admin_user=session.get('user'),
-        admin_emails=ADMIN_EMAILS)
+        admin_user=session.get('user'), admin_emails=ADMIN_EMAILS)
 
 @app.route('/admin/ban', methods=['POST'])
 @login_required
@@ -570,8 +567,7 @@ def admin():
 def ban_user():
     data = request.get_json()
     email = data.get('email')
-    if not email or email in ADMIN_EMAILS:
-        return jsonify({'success': False, 'error': 'Action non autorisee'})
+    if not email or email in ADMIN_EMAILS: return jsonify({'success': False, 'error': 'Action non autorisee'})
     ph = '%s' if (POSTGRES and DATABASE_URL) else '?'
     db_execute(f'UPDATE users SET banned=1 WHERE email={ph}', (email,))
     return jsonify({'success': True})
@@ -582,15 +578,14 @@ def ban_user():
 def unban_user():
     data = request.get_json()
     email = data.get('email')
-    if not email:
-        return jsonify({'success': False, 'error': 'Email manquant'})
+    if not email: return jsonify({'success': False, 'error': 'Email manquant'})
     ph = '%s' if (POSTGRES and DATABASE_URL) else '?'
     db_execute(f'UPDATE users SET banned=0 WHERE email={ph}', (email,))
     return jsonify({'success': True})
 
 @app.route('/health')
 def health():
-    return jsonify({'status': 'ok', 'version': '6.3'})
+    return jsonify({'status': 'ok', 'version': '6.4', 'ai': bool(ANTHROPIC_API_KEY)})
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
