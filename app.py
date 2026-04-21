@@ -27,8 +27,8 @@ ADMIN_EMAILS         = [e.strip() for e in os.environ.get('ADMIN_EMAILS', '').sp
 
 # Setup Google blueprint
 google_bp = make_google_blueprint(
-    client_id=GOOGLE_CLIENT_ID,
-    client_secret=GOOGLE_CLIENT_SECRET,
+    client_id=os.environ.get('GOOGLE_CLIENT_ID'),
+    client_secret=os.environ.get('GOOGLE_CLIENT_SECRET'),
     scope=['openid', 'https://www.googleapis.com/auth/userinfo.email', 'https://www.googleapis.com/auth/userinfo.profile'],
     redirect_url='/google_callback'
 )
