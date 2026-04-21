@@ -262,7 +262,7 @@ dropZone.addEventListener('drop', e => { e.preventDefault(); dropZone.classList.
 document.getElementById('btn-launch').addEventListener('click', launchScan);
 
 function addFiles(files) {
-  selectedFiles = [...selectedFiles, ...files];
+  selectedFiles = Array.from(files);
   renderFileList();
   scanBtnWrap.style.display = 'block';
   resultsSection.style.display = 'none';
