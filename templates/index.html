@@ -434,10 +434,24 @@ async function analyzeWithAI(idx, filepath, event) {
     if (data.success) {
       const r = data.result;
       const suppressed = r.lignes_supprimees && r.lignes_supprimees.length > 0
-        ? `<div class="ai-suppressed"><div class="ai-suppressed-title">⚡ Lignes supprimées :</div><ul>${r.lignes_supprimees.map(l => `<li>${l}</li>`).join('')}</ul></div>` : '';
+        ? `<div class="ai-suppressed">
+      <div class="ai-suppressed-title">⚡ Lignes à supprimer manuellement :</div>
+      <table style="width:100%;border-collapse:collapse;margin-top:8px">
+        <tr style="color:var(--dim);font-size:10px">
+          <th style="text-align:left;padding:4px 8px">LIGNE</th>
+          <th style="text-align:left;padding:4px 8px">CONTENU</th>
+          <th style="text-align:left;padding:4px 8px">RAISON</th>
+        </tr>
+        ${r.lignes_supprimees.map(l => `
+        <tr style="border-top:1px solid var(--border)">
+          <td style="padding:6px 8px;color:var(--red);font-weight:700">${l.ligne}</td>
+          <td style="padding:6px 8px;color:#ff80ab;font-size:10px;word-break:break-all">${String(l.contenu||'').replace(/</g,'&lt;').slice(0,100)}</td>
+          <td style="padding:6px 8px;color:var(--txt);font-size:11px">${String(l.raison||'').replace(/</g,'&lt;')}</td>
+        </tr>`).join('')}
+      </table>
+    </div>` : '';
 
-      const downloadBtn = r.fichier_nettoye
-        ? `<button class="btn-download" onclick="downloadClean('${fname}', ${idx})">↓ TÉLÉCHARGER FICHIER NETTOYÉ</button>` : '';
+      const downloadBtn = '';
 
       panel.innerHTML = `
         <div class="ai-title">🤖 Analyse Claude</div>
