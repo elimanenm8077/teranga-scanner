@@ -467,7 +467,7 @@ Réponds en JSON avec ce format exact :
                 'content-type': 'application/json'
             },
             json={
-                'model': 'claude-sonnet-4-20250514',
+                'model': 'claude-sonnet-4-6',
                 'max_tokens': 4000,
                 'messages': [{'role': 'user', 'content': prompt}]
             },
