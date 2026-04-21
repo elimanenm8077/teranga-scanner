@@ -42,7 +42,7 @@ Upload your files directly from the browser — no installation required.
 [![Deploy on Render](https://render.com/button.svg)](https://render.com/)
 
 1. Fork this repo
-2. Go to [railway.app](https://render.com/)
+2. Go to [render.com/](https://render.com/)
 3. New Project → Deploy from GitHub
 4. Select this repo → Deploy
 5. Your scanner is live in 2 minutes ✅
