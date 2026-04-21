@@ -39,7 +39,7 @@ Upload your files directly from the browser — no installation required.
 
 ## 🚀 Deploy on Railway
 
-[![Deploy on Railway](https://render.com/button.svg)](https://render.com/)
+[![Deploy on Render](https://render.com/button.svg)](https://render.com/)
 
 1. Fork this repo
 2. Go to [railway.app](https://render.com/)
