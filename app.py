@@ -450,6 +450,7 @@ Ta mission :
 1. Explique en français ce que font exactement les backdoors détectés (2-3 phrases max par backdoor)
 2. Donne le numéro exact de chaque ligne à supprimer avec le contenu exact de la ligne
 3. Explique pourquoi chaque ligne doit être supprimée
+4. Si une détection est un FAUX POSITIF (code légitime mal détecté), indique-le clairement dans l'analyse avec "FAUX POSITIF" et ne l'inclus pas dans lignes_supprimees
 
 Réponds en JSON avec ce format exact :
 {{
