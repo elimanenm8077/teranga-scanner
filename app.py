@@ -6,7 +6,7 @@ from functools import wraps
 import sqlite3
 import time
 
-from authlib.integrations.flask_client import OAuth
+from flask_dance.contrib.google import make_google_blueprint, google
 
 try:
     import rarfile
