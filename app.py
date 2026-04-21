@@ -474,6 +474,10 @@ Réponds en JSON avec ce format exact :
             timeout=60
         )
         resp_data = resp.json()
+        if 'error' in resp_data:
+            return jsonify({'error': resp_data['error'].get('message', 'Erreur API Claude')}), 500
+        if 'content' not in resp_data:
+            return jsonify({'error': f'Réponse inattendue: {str(resp_data)[:200]}'}), 500
         text = resp_data['content'][0]['text']
 
         # Parse JSON from response
