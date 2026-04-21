@@ -10,32 +10,17 @@
 :root {
   --bg: #04060d; --bg2: #070c18; --bg3: #0a1020;
   --border: #0f2040; --border2: #1a3a6a;
-  --acc: #00d4ff; --acc2: #0090cc;
-  --grn: #00ff88; --grn2: #00cc6a;
-  --ylw: #ffcc00; --red: #ff2244; --red2: #cc1133;
-  --org: #ff6600; --dim: #2a4a6a;
-  --txt: #7ab8d8; --wht: #e0f0ff;
+  --acc: #00d4ff; --grn: #00ff88; --ylw: #ffcc00;
+  --red: #ff2244; --org: #ff6600; --pur: #a855f7;
+  --dim: #2a4a6a; --txt: #7ab8d8; --wht: #e0f0ff;
   --mono: 'Space Mono', monospace; --sans: 'Syne', sans-serif;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { background: var(--bg); color: var(--txt); font-family: var(--mono); font-size: 13px; min-height: 100vh; overflow-x: hidden; }
-body::before {
-  content: ''; position: fixed; inset: 0;
-  background-image: linear-gradient(rgba(0,212,255,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(0,212,255,0.03) 1px, transparent 1px);
-  background-size: 40px 40px; pointer-events: none; z-index: 0;
-}
-header {
-  position: relative; z-index: 10; padding: 16px 40px;
-  display: flex; align-items: center; justify-content: space-between;
-  border-bottom: 1px solid var(--border);
-  background: rgba(4,6,13,0.9); backdrop-filter: blur(10px);
-}
+body::before { content: ''; position: fixed; inset: 0; background-image: linear-gradient(rgba(0,212,255,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(0,212,255,0.03) 1px, transparent 1px); background-size: 40px 40px; pointer-events: none; z-index: 0; }
+header { position: relative; z-index: 10; padding: 16px 40px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); background: rgba(4,6,13,0.9); backdrop-filter: blur(10px); }
 .logo { display: flex; align-items: center; gap: 14px; }
-.logo-icon {
-  width: 38px; height: 38px; border: 1.5px solid var(--acc); border-radius: 8px;
-  display: flex; align-items: center; justify-content: center;
-  background: rgba(0,212,255,0.05);
-}
+.logo-icon { width: 38px; height: 38px; border: 1.5px solid var(--acc); border-radius: 8px; display: flex; align-items: center; justify-content: center; background: rgba(0,212,255,0.05); }
 .logo-icon::before { content: '⬡'; color: var(--acc); font-size: 18px; animation: pulse 3s ease-in-out infinite; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
 .logo-text { font-family: var(--sans); font-weight: 800; font-size: 20px; color: var(--wht); letter-spacing: -0.5px; }
@@ -99,7 +84,7 @@ main { position: relative; z-index: 1; max-width: 1200px; margin: 0 auto; paddin
 .clean-icon { font-size: 40px; margin-bottom: 12px; }
 .clean-title { font-family: var(--sans); font-size: 20px; font-weight: 700; color: var(--grn); margin-bottom: 8px; }
 .clean-sub { color: var(--dim); font-size: 12px; }
-.result-card { background: var(--bg3); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 12px; overflow: hidden; transition: border-color 0.2s; }
+.result-card { background: var(--bg3); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 12px; overflow: hidden; }
 .result-card.critical { border-left: 3px solid var(--red); }
 .result-card.medium { border-left: 3px solid var(--ylw); }
 .result-card.low { border-left: 3px solid var(--grn); }
@@ -110,7 +95,7 @@ main { position: relative; z-index: 1; max-width: 1200px; margin: 0 auto; paddin
 .risk-badge.medium { background: rgba(255,204,0,0.12); color: var(--ylw); }
 .risk-badge.low { background: rgba(0,255,136,0.1); color: var(--grn); }
 .result-file { color: var(--wht); font-size: 12px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.result-meta { display: flex; gap: 16px; flex-shrink: 0; }
+.result-meta { display: flex; gap: 16px; flex-shrink: 0; align-items: center; }
 .result-score { color: var(--acc); font-size: 11px; }
 .result-count { color: var(--dim); font-size: 11px; }
 .result-toggle { color: var(--dim); font-size: 16px; transition: transform 0.2s; }
@@ -128,6 +113,22 @@ main { position: relative; z-index: 1; max-width: 1200px; margin: 0 auto; paddin
 .finding-ctx { font-size: 10px; line-height: 1.6; background: var(--bg); border-left: 2px solid var(--border2); padding: 8px 10px; border-radius: 0 4px 4px 0; }
 .ctx-hi { color: var(--acc); font-weight: 700; }
 .ctx-line { color: var(--dim); }
+
+/* AI PANEL */
+.btn-ai { background: rgba(168,85,247,0.1); border: 1px solid rgba(168,85,247,0.3); color: var(--pur); padding: 5px 14px; border-radius: 6px; font-family: var(--mono); font-size: 10px; font-weight: 700; letter-spacing: 1px; cursor: pointer; transition: all 0.2s; }
+.btn-ai:hover { background: var(--pur); color: #fff; }
+.btn-ai:disabled { opacity: 0.4; cursor: not-allowed; }
+.ai-panel { display: none; margin-top: 12px; background: rgba(168,85,247,0.04); border: 1px solid rgba(168,85,247,0.15); border-radius: 10px; padding: 16px; }
+.ai-panel.open { display: block; }
+.ai-loading { color: var(--pur); font-size: 11px; letter-spacing: 1px; animation: pulse 1s ease-in-out infinite; }
+.ai-title { font-family: var(--sans); font-size: 13px; font-weight: 700; color: var(--pur); margin-bottom: 10px; }
+.ai-analyse { color: var(--txt); font-size: 12px; line-height: 1.7; margin-bottom: 12px; }
+.ai-suppressed { margin-bottom: 12px; }
+.ai-suppressed-title { color: var(--ylw); font-size: 11px; margin-bottom: 6px; }
+.ai-suppressed li { color: var(--dim); font-size: 11px; margin-left: 16px; margin-bottom: 2px; }
+.btn-download { background: var(--grn); color: #04060d; border: none; padding: 10px 24px; border-radius: 8px; font-family: var(--mono); font-size: 11px; font-weight: 700; cursor: pointer; transition: all 0.2s; letter-spacing: 1px; }
+.btn-download:hover { background: var(--wht); transform: translateY(-1px); }
+
 footer { position: relative; z-index: 1; text-align: center; padding: 20px 40px; border-top: 1px solid var(--border); color: var(--dim); font-size: 10px; letter-spacing: 2px; }
 #file-input, #folder-input, #zip-input { display: none; }
 ::-webkit-scrollbar { width: 4px; }
@@ -164,9 +165,7 @@ footer { position: relative; z-index: 1; text-align: center; padding: 20px 40px;
       <span class="user-name">{{ user.name }}</span>
     </div>
     {% endif %}
-    {% if is_admin %}
-    <a href="/admin" class="nav-btn admin">ADMIN</a>
-    {% endif %}
+    {% if is_admin %}<a href="/admin" class="nav-btn admin">ADMIN</a>{% endif %}
     <a href="/logout" class="nav-btn logout">DÉCONNEXION</a>
   </div>
 </header>
@@ -212,14 +211,11 @@ footer { position: relative; z-index: 1; text-align: center; padding: 20px 40px;
       <input type="file" id="folder-input" multiple webkitdirectory>
       <input type="file" id="zip-input" multiple accept=".zip,.rar">
     </div>
-
     <div class="file-list" id="file-list"></div>
-
     <div class="progress-wrap" id="progress-wrap">
       <div class="progress-bar-bg"><div class="progress-bar-fill" id="progress-fill"></div></div>
       <div class="progress-text" id="progress-text">ANALYSE EN COURS...</div>
     </div>
-
     <div style="text-align:center; margin-top:20px; display:none" id="scan-btn-wrap">
       <button class="btn-scan" id="btn-launch">LANCER LE SCAN</button>
     </div>
@@ -234,10 +230,12 @@ footer { position: relative; z-index: 1; text-align: center; padding: 20px 40px;
   </div>
 </main>
 
-<footer>TERANGA DEV © 2026 — SECURITY SCANNER WEB EDITION — TARKALLA</footer>
+<footer>TERANGA DEV © 2026 — SECURITY SCANNER v6.4 — TARKALLA</footer>
 
 <script>
-let selectedFiles = [], lastResults = null;
+const AI_ENABLED = {{ 'true' if ai_enabled else 'false' }};
+let selectedFiles = [], lastResults = null, fileContents = {};
+
 const dropZone = document.getElementById('drop-zone');
 const fileInput = document.getElementById('file-input');
 const folderInput = document.getElementById('folder-input');
@@ -263,9 +261,20 @@ document.getElementById('btn-launch').addEventListener('click', launchScan);
 
 function addFiles(files) {
   selectedFiles = Array.from(files);
+  fileContents = {};
   renderFileList();
   scanBtnWrap.style.display = 'block';
   resultsSection.style.display = 'none';
+
+  // Read file contents for AI analysis
+  selectedFiles.forEach(f => {
+    const ext = f.name.split('.').pop().toLowerCase();
+    if (['lua','js','cfg','html','htm','json'].includes(ext) && f.size < 500000) {
+      const reader = new FileReader();
+      reader.onload = e => { fileContents[f.name] = e.target.result; };
+      reader.readAsText(f);
+    }
+  });
 }
 
 function renderFileList() {
@@ -329,8 +338,10 @@ function showResults(data) {
   threats.sort((a, b) => b.score - a.score);
   threats.forEach((r, idx) => {
     const rl = r.risk_level.toLowerCase();
+    const fname = r.file.split('/').pop();
     const card = document.createElement('div');
     card.className = `result-card ${rl}`;
+    const aiBtn = AI_ENABLED ? `<button class="btn-ai" onclick="analyzeWithAI(${idx}, '${r.file.replace(/'/g,"\\'")}', event)">🤖 ANALYSER IA</button>` : '';
     card.innerHTML = `
       <div class="result-header" onclick="toggleCard(${idx})">
         <span class="risk-badge ${rl}">${r.risk_level}</span>
@@ -338,12 +349,18 @@ function showResults(data) {
         <div class="result-meta">
           <span class="result-score">Score: ${r.score}</span>
           <span class="result-count">${r.total_findings} détection(s)</span>
+          ${aiBtn}
           <span class="result-toggle" id="toggle-${idx}">›</span>
         </div>
       </div>
-      <div class="result-body" id="body-${idx}">${r.findings.map(f => renderFinding(f)).join('')}</div>`;
+      <div class="result-body" id="body-${idx}">
+        ${r.findings.map(f => renderFinding(f)).join('')}
+        <div class="ai-panel" id="ai-panel-${idx}"></div>
+      </div>`;
     resultsContainer.appendChild(card);
   });
+  // Store results for AI
+  window._scanResults = threats;
 }
 
 function renderFinding(f) {
@@ -370,6 +387,79 @@ function renderFinding(f) {
 function toggleCard(idx) {
   document.getElementById('body-'+idx).classList.toggle('open');
   document.getElementById('toggle-'+idx).classList.toggle('open');
+}
+
+async function analyzeWithAI(idx, filepath, event) {
+  event.stopPropagation();
+  const btn = event.target;
+  const panel = document.getElementById('ai-panel-' + idx);
+  const result = window._scanResults[idx];
+  const fname = filepath.split('/').pop();
+
+  // Get file content
+  let content = fileContents[fname] || fileContents[filepath] || '';
+
+  btn.disabled = true;
+  btn.textContent = '⏳ ANALYSE...';
+  panel.classList.add('open');
+  panel.innerHTML = '<div class="ai-loading">🤖 Claude analyse le fichier...</div>';
+
+  // Open the result body
+  document.getElementById('body-'+idx).classList.add('open');
+  document.getElementById('toggle-'+idx).classList.add('open');
+
+  try {
+    const res = await fetch('/ai_analyze', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        filename: filepath,
+        content: content,
+        findings: result.findings
+      })
+    });
+    const data = await res.json();
+
+    if (data.success) {
+      const r = data.result;
+      const suppressed = r.lignes_supprimees && r.lignes_supprimees.length > 0
+        ? `<div class="ai-suppressed">
+            <div class="ai-suppressed-title">⚡ Lignes supprimées :</div>
+            <ul>${r.lignes_supprimees.map(l => `<li>${l}</li>`).join('')}</ul>
+           </div>` : '';
+
+      const downloadBtn = r.fichier_nettoye
+        ? `<button class="btn-download" onclick="downloadClean('${fname}', ${idx})">↓ TÉLÉCHARGER FICHIER NETTOYÉ</button>` : '';
+
+      panel.innerHTML = `
+        <div class="ai-title">🤖 Analyse Claude</div>
+        <div class="ai-analyse">${r.analyse || ''}</div>
+        ${suppressed}
+        ${downloadBtn}`;
+
+      // Store cleaned content
+      if (r.fichier_nettoye) {
+        window['_clean_' + idx] = { name: fname, content: r.fichier_nettoye };
+      }
+    } else {
+      panel.innerHTML = `<div style="color:var(--red);font-size:11px;">Erreur: ${data.error}</div>`;
+    }
+  } catch(e) {
+    panel.innerHTML = `<div style="color:var(--red);font-size:11px;">Erreur réseau</div>`;
+  }
+
+  btn.disabled = false;
+  btn.textContent = '🤖 ANALYSER IA';
+}
+
+function downloadClean(filename, idx) {
+  const data = window['_clean_' + idx];
+  if (!data) return;
+  const blob = new Blob([data.content], {type: 'text/plain'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = data.name.replace(/(\.[^.]+)$/, '_clean$1');
+  a.click();
 }
 
 function exportJSON() {
