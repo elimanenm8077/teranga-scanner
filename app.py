@@ -44,8 +44,13 @@ def init_db():
             created_at TEXT DEFAULT (datetime('now')),
             last_seen TEXT,
             scan_count INTEGER DEFAULT 0,
-            total_time INTEGER DEFAULT 0
+            total_time INTEGER DEFAULT 0,
+            banned INTEGER DEFAULT 0
         )''')
+        # Add banned column if missing (migration)
+        try:
+            db.execute('ALTER TABLE users ADD COLUMN banned INTEGER DEFAULT 0')
+        except: pass
         db.execute('''CREATE TABLE IF NOT EXISTS sessions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_email TEXT,
@@ -111,7 +116,6 @@ def callback():
     if not code:
         return redirect(url_for('login_page'))
     try:
-        # Exchange code for token
         token_resp = requests.post(GOOGLE_TOKEN_URL, data={
             'code': code,
             'client_id': CLIENT_ID,
@@ -124,15 +128,18 @@ def callback():
         if not access_token:
             return redirect(url_for('login_page'))
 
-        # Get user info
         user_resp = requests.get(GOOGLE_USER_URL, headers={'Authorization': f'Bearer {access_token}'})
         user_info = user_resp.json()
-
         email   = user_info.get('email', '')
         name    = user_info.get('name', email)
         picture = user_info.get('picture', '')
 
+        # Check if banned
         with get_db() as db:
+            existing = db.execute('SELECT banned FROM users WHERE email=?', (email,)).fetchone()
+            if existing and existing['banned']:
+                return render_template('login.html', error="Votre compte a été banni. Contactez l'administrateur.")
+
             db.execute('''INSERT INTO users (email, name, picture, last_seen)
                           VALUES (?, ?, ?, datetime('now'))
                           ON CONFLICT(email) DO UPDATE SET
@@ -433,6 +440,10 @@ def scan():
         'date': datetime.now().strftime('%d/%m/%Y %H:%M:%S')
     })
 
+# ================================================================
+# ADMIN
+# ================================================================
+
 @app.route('/admin')
 @login_required
 @admin_required
@@ -444,8 +455,36 @@ def admin():
         total_users   = db.execute('SELECT COUNT(*) FROM users').fetchone()[0]
         total_scans   = db.execute('SELECT SUM(scan_count) FROM users').fetchone()[0] or 0
         total_threats = db.execute('SELECT SUM(threats_found) FROM scan_logs').fetchone()[0] or 0
-    return render_template('admin.html', users=users, sessions_list=sessions_list, scan_logs=scan_logs,
-        total_users=total_users, total_scans=total_scans, total_threats=total_threats, admin_user=session.get('user'))
+    return render_template('admin.html',
+        users=users, sessions_list=sessions_list, scan_logs=scan_logs,
+        total_users=total_users, total_scans=total_scans, total_threats=total_threats,
+        admin_user=session.get('user'), admin_emails=ADMIN_EMAILS)
+
+@app.route('/admin/ban', methods=['POST'])
+@login_required
+@admin_required
+def ban_user():
+    data = request.get_json()
+    email = data.get('email')
+    if not email or email in ADMIN_EMAILS:
+        return jsonify({'success': False, 'error': 'Action non autorisee'})
+    with get_db() as db:
+        db.execute('UPDATE users SET banned=1 WHERE email=?', (email,))
+        db.commit()
+    return jsonify({'success': True})
+
+@app.route('/admin/unban', methods=['POST'])
+@login_required
+@admin_required
+def unban_user():
+    data = request.get_json()
+    email = data.get('email')
+    if not email:
+        return jsonify({'success': False, 'error': 'Email manquant'})
+    with get_db() as db:
+        db.execute('UPDATE users SET banned=0 WHERE email=?', (email,))
+        db.commit()
+    return jsonify({'success': True})
 
 @app.route('/health')
 def health():
