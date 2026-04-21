@@ -27,12 +27,11 @@ ADMIN_EMAILS         = [e.strip() for e in os.environ.get('ADMIN_EMAILS', '').sp
 
 # Setup Google blueprint
 google_bp = make_google_blueprint(
-    client_id=os.environ.get('GOOGLE_CLIENT_ID'),
-    client_secret=os.environ.get('GOOGLE_CLIENT_SECRET'),
+    client_id="983810213589-ia9cukopmegpvt9jfj0s32e8bsl93s0s.apps.googleusercontent.com",
+    client_secret="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",
     scope=['openid', 'https://www.googleapis.com/auth/userinfo.email', 'https://www.googleapis.com/auth/userinfo.profile'],
     redirect_url='/google_callback'
 )
-app.register_blueprint(google_bp, url_prefix='/google_auth')
 
 # ================================================================
 # DATABASE
