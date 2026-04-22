@@ -545,24 +545,52 @@ def scan():
 # ADMIN
 # ================================================================
 
+def fmt_date(d):
+    if not d: return '—'
+    try: return str(d)[:16]
+    except: return '—'
+
 @app.route('/admin')
 @login_required
 @admin_required
 def admin():
     try:
-        users = db_execute('SELECT u.*, COUNT(s.id) as session_count FROM users u LEFT JOIN sessions s ON s.user_email=u.email GROUP BY u.id, u.email, u.name, u.picture, u.created_at, u.last_seen, u.scan_count, u.total_time, u.banned ORDER BY u.last_seen DESC NULLS LAST', fetchall=True)
-        sessions_list = db_execute('SELECT s.*, u.name FROM sessions s LEFT JOIN users u ON u.email=s.user_email ORDER BY s.login_at DESC LIMIT 50', fetchall=True)
-        scan_logs = db_execute('SELECT sl.*, u.name FROM scan_logs sl LEFT JOIN users u ON u.email=sl.user_email ORDER BY sl.scanned_at DESC LIMIT 50', fetchall=True)
+        users_raw = db_execute('SELECT u.*, COUNT(s.id) as session_count FROM users u LEFT JOIN sessions s ON s.user_email=u.email GROUP BY u.id, u.email, u.name, u.picture, u.created_at, u.last_seen, u.scan_count, u.total_time, u.banned ORDER BY u.last_seen DESC NULLS LAST', fetchall=True)
+        sessions_raw = db_execute('SELECT s.*, u.name FROM sessions s LEFT JOIN users u ON u.email=s.user_email ORDER BY s.login_at DESC LIMIT 50', fetchall=True)
+        logs_raw = db_execute('SELECT sl.*, u.name FROM scan_logs sl LEFT JOIN users u ON u.email=sl.user_email ORDER BY sl.scanned_at DESC LIMIT 50', fetchall=True)
         total_users   = db_execute('SELECT COUNT(*) as c FROM users', fetchone=True)
         total_scans   = db_execute('SELECT SUM(scan_count) as s FROM users', fetchone=True)
         total_threats = db_execute('SELECT SUM(threats_found) as t FROM scan_logs', fetchone=True)
         def val(r, k): return (r.get(k) if isinstance(r, dict) else r[0]) or 0 if r else 0
+
+        # Format dates
+        users = []
+        for u in (users_raw or []):
+            row = dict(u) if isinstance(u, dict) else dict(u)
+            row['created_at_fmt'] = fmt_date(row.get('created_at'))
+            row['last_seen_fmt']  = fmt_date(row.get('last_seen'))
+            users.append(row)
+
+        sessions_list = []
+        for s in (sessions_raw or []):
+            row = dict(s) if isinstance(s, dict) else dict(s)
+            row['login_at_fmt']  = fmt_date(row.get('login_at'))
+            row['logout_at_fmt'] = fmt_date(row.get('logout_at'))
+            sessions_list.append(row)
+
+        scan_logs = []
+        for sl in (logs_raw or []):
+            row = dict(sl) if isinstance(sl, dict) else dict(sl)
+            row['scanned_at_fmt'] = fmt_date(row.get('scanned_at'))
+            scan_logs.append(row)
+
     except Exception as e:
         users = []; sessions_list = []; scan_logs = []
         total_users = total_scans = total_threats = 0
         def val(r, k): return 0
+
     return render_template('admin.html',
-        users=users or [], sessions_list=sessions_list or [], scan_logs=scan_logs or [],
+        users=users, sessions_list=sessions_list, scan_logs=scan_logs,
         total_users=val(total_users, 'c'), total_scans=val(total_scans, 's'),
         total_threats=val(total_threats, 't'),
         admin_user=session.get('user'), admin_emails=ADMIN_EMAILS)
