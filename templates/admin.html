@@ -63,7 +63,6 @@ td { padding: 12px 16px; vertical-align: middle; }
 .btn-ban.ban:hover { background: var(--red); color: #fff; }
 .btn-ban.unban { background: rgba(0,255,136,0.1); color: var(--grn); border: 1px solid rgba(0,255,136,0.3); }
 .btn-ban.unban:hover { background: var(--grn); color: #04060d; }
-.online-dot { display: inline-block; width: 7px; height: 7px; background: var(--grn); border-radius: 50%; margin-right: 4px; }
 </style>
 </head>
 <body>
@@ -117,7 +116,7 @@ td { padding: 12px 16px; vertical-align: middle; }
       </thead>
       <tbody>
         {% for u in users %}
-        <tr id="user-row-{{ loop.index }}">
+        <tr>
           <td>
             <div class="user-cell">
               {% if u.picture %}
@@ -145,8 +144,8 @@ td { padding: 12px 16px; vertical-align: middle; }
             <span style="color:var(--grn);font-size:10px;">● ACTIF</span>
             {% endif %}
           </td>
-          <td class="dim">{{ u.created_at|string[:16] if u.created_at else '—' }}</td>
-          <td class="dim">{{ u.last_seen|string[:16] if u.last_seen else '—' }}</td>
+          <td class="dim">{{ u.created_at_fmt or '—' }}</td>
+          <td class="dim">{{ u.last_seen_fmt or '—' }}</td>
           <td><span class="num">{{ u.scan_count or 0 }}</span></td>
           <td>
             {% set mins = (u.total_time or 0) // 60 %}
@@ -157,9 +156,9 @@ td { padding: 12px 16px; vertical-align: middle; }
           <td>
             {% if u.email not in admin_emails %}
             {% if u.banned %}
-            <button class="btn-ban unban" onclick="toggleBan('{{ u.email }}', false, {{ loop.index }})">DÉBANNIR</button>
+            <button class="btn-ban unban" onclick="toggleBan('{{ u.email }}', false)">DÉBANNIR</button>
             {% else %}
-            <button class="btn-ban ban" onclick="toggleBan('{{ u.email }}', true, {{ loop.index }})">BANNIR</button>
+            <button class="btn-ban ban" onclick="toggleBan('{{ u.email }}', true)">BANNIR</button>
             {% endif %}
             {% else %}
             <span class="dim">—</span>
@@ -188,14 +187,8 @@ td { padding: 12px 16px; vertical-align: middle; }
             <div class="name">{{ s.name or s.user_email }}</div>
             <div class="email">{{ s.user_email }}</div>
           </td>
-          <td class="dim">{{ s.login_at|string[:16] if s.login_at else '—' }}</td>
-          <td>
-            {% if s.logout_at %}
-            <span class="dim">{{ s.logout_at|string[:16] }}</span>
-            {% else %}
-            <span style="color:var(--grn)"><span class="online-dot"></span>En ligne</span>
-            {% endif %}
-          </td>
+          <td class="dim">{{ s.login_at_fmt or '—' }}</td>
+          <td class="dim">{{ s.logout_at_fmt or '—' }}</td>
           <td>
             {% if s.duration %}
             {% set mins = s.duration // 60 %}
@@ -227,7 +220,7 @@ td { padding: 12px 16px; vertical-align: middle; }
             <div class="name">{{ sl.name or sl.user_email }}</div>
             <div class="email">{{ sl.user_email }}</div>
           </td>
-          <td class="dim">{{ sl.scanned_at|string[:16] if sl.scanned_at else '—' }}</td>
+          <td class="dim">{{ sl.scanned_at_fmt or '—' }}</td>
           <td><span class="num">{{ sl.files_count or 0 }}</span></td>
           <td>{% if sl.threats_found and sl.threats_found > 0 %}<span class="threat-cell">{{ sl.threats_found }}</span>{% else %}<span class="no-threat">0</span>{% endif %}</td>
           <td>{% if sl.critical_count and sl.critical_count > 0 %}<span class="threat-cell">{{ sl.critical_count }}</span>{% else %}<span class="no-threat">0</span>{% endif %}</td>
@@ -239,7 +232,7 @@ td { padding: 12px 16px; vertical-align: middle; }
 </main>
 
 <script>
-async function toggleBan(email, ban, rowIndex) {
+async function toggleBan(email, ban) {
   const action = ban ? 'ban' : 'unban';
   const msg = ban ? `Bannir ${email} ?` : `Débannir ${email} ?`;
   if (!confirm(msg)) return;
@@ -250,14 +243,9 @@ async function toggleBan(email, ban, rowIndex) {
       body: JSON.stringify({email})
     });
     const data = await res.json();
-    if (data.success) {
-      location.reload();
-    } else {
-      alert('Erreur: ' + (data.error || 'Inconnu'));
-    }
-  } catch(e) {
-    alert('Erreur réseau');
-  }
+    if (data.success) { location.reload(); }
+    else { alert('Erreur: ' + (data.error || 'Inconnu')); }
+  } catch(e) { alert('Erreur réseau'); }
 }
 </script>
 </body>
