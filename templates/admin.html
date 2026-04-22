@@ -145,8 +145,8 @@ td { padding: 12px 16px; vertical-align: middle; }
             <span style="color:var(--grn);font-size:10px;">● ACTIF</span>
             {% endif %}
           </td>
-          <td class="dim">{{ u.created_at[:16] if u.created_at else '—' }}</td>
-          <td class="dim">{{ u.last_seen[:16] if u.last_seen else '—' }}</td>
+          <td class="dim">{{ u.created_at|string[:16] if u.created_at else '—' }}</td>
+          <td class="dim">{{ u.last_seen|string[:16] if u.last_seen else '—' }}</td>
           <td><span class="num">{{ u.scan_count or 0 }}</span></td>
           <td>
             {% set mins = (u.total_time or 0) // 60 %}
@@ -188,12 +188,12 @@ td { padding: 12px 16px; vertical-align: middle; }
             <div class="name">{{ s.name or s.user_email }}</div>
             <div class="email">{{ s.user_email }}</div>
           </td>
-          <td class="dim">{{ s.login_at[:16] if s.login_at else '—' }}</td>
+          <td class="dim">{{ s.login_at|string[:16] if s.login_at else '—' }}</td>
           <td>
             {% if s.logout_at %}
-            <span class="dim">{{ s.logout_at[:16] }}</span>
+            <span class="dim">{{ s.logout_at|string[:16] }}</span>
             {% else %}
-            <span class="dim">—</span>
+            <span style="color:var(--grn)"><span class="online-dot"></span>En ligne</span>
             {% endif %}
           </td>
           <td>
@@ -227,7 +227,7 @@ td { padding: 12px 16px; vertical-align: middle; }
             <div class="name">{{ sl.name or sl.user_email }}</div>
             <div class="email">{{ sl.user_email }}</div>
           </td>
-          <td class="dim">{{ sl.scanned_at[:16] if sl.scanned_at else '—' }}</td>
+          <td class="dim">{{ sl.scanned_at|string[:16] if sl.scanned_at else '—' }}</td>
           <td><span class="num">{{ sl.files_count or 0 }}</span></td>
           <td>{% if sl.threats_found and sl.threats_found > 0 %}<span class="threat-cell">{{ sl.threats_found }}</span>{% else %}<span class="no-threat">0</span>{% endif %}</td>
           <td>{% if sl.critical_count and sl.critical_count > 0 %}<span class="threat-cell">{{ sl.critical_count }}</span>{% else %}<span class="no-threat">0</span>{% endif %}</td>
