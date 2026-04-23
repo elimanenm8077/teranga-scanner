@@ -24,16 +24,15 @@ app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'teranga-dev-secret-2026-tarkalla')
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024
 
-CLIENT_ID        = "983810213589-ia9cukopmegpvt9jfj0s32e8bsl93s0s.apps.googleusercontent.com"
-CLIENT_SECRET    = "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"
-REDIRECT_URI     = "https://teranga-scanner.onrender.com/callback"
-ADMIN_EMAILS     = [e.strip() for e in os.environ.get('ADMIN_EMAILS', 'elimanenm8077@gmail.com').split(',')]
+CLIENT_ID         = "983810213589-ia9cukopmegpvt9jfj0s32e8bsl93s0s.apps.googleusercontent.com"
+CLIENT_SECRET     = "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"
+REDIRECT_URI      = "https://teranga-scanner.onrender.com/callback"
+ADMIN_EMAILS      = [e.strip() for e in os.environ.get('ADMIN_EMAILS', 'elimanenm8077@gmail.com').split(',')]
 ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
-
-GOOGLE_AUTH_URL  = "https://accounts.google.com/o/oauth2/v2/auth"
-GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
-GOOGLE_USER_URL  = "https://www.googleapis.com/oauth2/v2/userinfo"
-DATABASE_URL     = os.environ.get('DATABASE_URL', '')
+GOOGLE_AUTH_URL   = "https://accounts.google.com/o/oauth2/v2/auth"
+GOOGLE_TOKEN_URL  = "https://oauth2.googleapis.com/token"
+GOOGLE_USER_URL   = "https://www.googleapis.com/oauth2/v2/userinfo"
+DATABASE_URL      = os.environ.get('DATABASE_URL', '')
 
 # ================================================================
 # DATABASE
@@ -69,7 +68,6 @@ def init_db():
             threats_found INTEGER, critical_count INTEGER
         )''')
     else:
-        import sqlite3 as sl
         cur.execute('''CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT UNIQUE NOT NULL,
             name TEXT, picture TEXT, created_at TEXT DEFAULT (datetime('now')),
@@ -427,20 +425,20 @@ def ai_analyze():
         return jsonify({'error': 'Contenu manquant'}), 400
 
     # Extrait ciblé autour des lignes détectées
-lines = content.split('\n')
-target_lines = set()
-for f in findings[:10]:
-    if isinstance(f.get('line'), int):
-        for i in range(max(0, f['line']-10), min(len(lines), f['line']+10)):
-            target_lines.add(i)
+    lines = content.split('\n')
+    target_lines = set()
+    for f in findings[:10]:
+        if isinstance(f.get('line'), int):
+            for i in range(max(0, f['line']-10), min(len(lines), f['line']+10)):
+                target_lines.add(i)
 
-if target_lines:
-    excerpts = []
-    for i in sorted(target_lines):
-        excerpts.append(f"{i+1:4d} | {lines[i]}")
-    content_preview = '\n'.join(excerpts)
-else:
-    content_preview = content[:6000] if len(content) > 6000 else content
+    if target_lines:
+        excerpts = []
+        for i in sorted(target_lines):
+            excerpts.append(f"{i+1:4d} | {lines[i]}")
+        content_preview = '\n'.join(excerpts)
+    else:
+        content_preview = content[:6000] if len(content) > 6000 else content
 
     findings_text = '\n'.join([
         f"- Ligne {f.get('line')}: [{f.get('category')}] {f.get('description')} — `{f.get('pattern','')[:80]}`"
@@ -451,10 +449,10 @@ else:
 
 Fichier analysé : `{filename}`
 
-Détections du scanner :
+Détections confirmées par le scanner :
 {findings_text}
 
-Contenu du fichier (extrait) :
+Extrait du fichier autour des lignes détectées :
 ```lua
 {content_preview}
 ```
@@ -463,15 +461,13 @@ Ta mission :
 1. Explique en français ce que font exactement les backdoors détectés (2-3 phrases max par backdoor)
 2. Donne le numéro exact de chaque ligne à supprimer avec le contenu exact de la ligne
 3. Explique pourquoi chaque ligne doit être supprimée
-4. Si une détection est un FAUX POSITIF (code légitime mal détecté), indique-le clairement dans l'analyse avec "FAUX POSITIF" et ne l'inclus pas dans lignes_supprimees
-IMPORTANT: Les détections ci-dessus ont été confirmées par le scanner Teranga DEV avec des signatures précises. Ne les considère PAS comme faux positifs sauf si tu vois clairement que le code est légitime dans l'extrait fourni. Si la ligne détectée n'est pas visible dans l'extrait, c'est parce que le fichier est trop long — les détections restent valides.
+IMPORTANT: Ces détections ont été confirmées par le scanner Teranga DEV avec des signatures précises et vérifiées. Fais confiance aux détections. Ne dis JAMAIS "faux positif" — ces signatures sont exactes et connues.
 
-Réponds en JSON avec ce format exact :
+Réponds UNIQUEMENT en JSON avec ce format :
 {{
   "analyse": "explication claire des backdoors trouvés",
   "lignes_supprimees": [
-    {{"ligne": 430, "contenu": "loadFonts(...)", "raison": "Fake Font backdoor - exécution de code arbitraire"}},
-    {{"ligne": 12, "contenu": "require('http').get(...)", "raison": "Chargement de code depuis URL distante"}}
+    {{"ligne": 430, "contenu": "code exact de la ligne", "raison": "explication"}}
   ]
 }}"""
 
@@ -485,7 +481,7 @@ Réponds en JSON avec ce format exact :
             },
             json={
                 'model': 'claude-sonnet-4-6',
-                'max_tokens': 8000,
+                'max_tokens': 4000,
                 'messages': [{'role': 'user', 'content': prompt}]
             },
             timeout=60
@@ -496,20 +492,12 @@ Réponds en JSON avec ce format exact :
         if 'content' not in resp_data:
             return jsonify({'error': f'Réponse inattendue: {str(resp_data)[:200]}'}), 500
         text = resp_data['content'][0]['text']
-
-        # Parse JSON from response
         try:
-            # Extract JSON from response
             json_match = re.search(r'\{.*\}', text, re.DOTALL)
-            if json_match:
-                result = json.loads(json_match.group())
-            else:
-                result = {'analyse': text, 'lignes_supprimees': [], 'fichier_nettoye': content}
+            result = json.loads(json_match.group()) if json_match else {'analyse': text, 'lignes_supprimees': []}
         except:
-            result = {'analyse': text, 'lignes_supprimees': [], 'fichier_nettoye': content}
-
+            result = {'analyse': text, 'lignes_supprimees': []}
         return jsonify({'success': True, 'result': result, 'filename': filename})
-
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -534,7 +522,6 @@ def scan():
     for f in files:
         if not f.filename: continue
         all_results.extend(extract_and_scan(f))
-    # Remove content from results to avoid large response
     for r in all_results:
         r.pop('content', None)
     threats  = [r for r in all_results if r.get('findings')]
@@ -570,40 +557,34 @@ def fmt_date(d):
 @admin_required
 def admin():
     try:
-        users_raw = db_execute('SELECT u.*, COUNT(s.id) as session_count FROM users u LEFT JOIN sessions s ON s.user_email=u.email GROUP BY u.id, u.email, u.name, u.picture, u.created_at, u.last_seen, u.scan_count, u.total_time, u.banned ORDER BY u.last_seen DESC NULLS LAST', fetchall=True)
+        users_raw    = db_execute('SELECT u.*, COUNT(s.id) as session_count FROM users u LEFT JOIN sessions s ON s.user_email=u.email GROUP BY u.id, u.email, u.name, u.picture, u.created_at, u.last_seen, u.scan_count, u.total_time, u.banned ORDER BY u.last_seen DESC NULLS LAST', fetchall=True)
         sessions_raw = db_execute('SELECT s.*, u.name FROM sessions s LEFT JOIN users u ON u.email=s.user_email ORDER BY s.login_at DESC LIMIT 50', fetchall=True)
-        logs_raw = db_execute('SELECT sl.*, u.name FROM scan_logs sl LEFT JOIN users u ON u.email=sl.user_email ORDER BY sl.scanned_at DESC LIMIT 50', fetchall=True)
+        logs_raw     = db_execute('SELECT sl.*, u.name FROM scan_logs sl LEFT JOIN users u ON u.email=sl.user_email ORDER BY sl.scanned_at DESC LIMIT 50', fetchall=True)
         total_users   = db_execute('SELECT COUNT(*) as c FROM users', fetchone=True)
         total_scans   = db_execute('SELECT SUM(scan_count) as s FROM users', fetchone=True)
         total_threats = db_execute('SELECT SUM(threats_found) as t FROM scan_logs', fetchone=True)
         def val(r, k): return (r.get(k) if isinstance(r, dict) else r[0]) or 0 if r else 0
-
-        # Format dates
         users = []
         for u in (users_raw or []):
-            row = dict(u) if isinstance(u, dict) else dict(u)
+            row = dict(u)
             row['created_at_fmt'] = fmt_date(row.get('created_at'))
             row['last_seen_fmt']  = fmt_date(row.get('last_seen'))
             users.append(row)
-
         sessions_list = []
         for s in (sessions_raw or []):
-            row = dict(s) if isinstance(s, dict) else dict(s)
+            row = dict(s)
             row['login_at_fmt']  = fmt_date(row.get('login_at'))
             row['logout_at_fmt'] = fmt_date(row.get('logout_at'))
             sessions_list.append(row)
-
         scan_logs = []
         for sl in (logs_raw or []):
-            row = dict(sl) if isinstance(sl, dict) else dict(sl)
+            row = dict(sl)
             row['scanned_at_fmt'] = fmt_date(row.get('scanned_at'))
             scan_logs.append(row)
-
     except Exception as e:
         users = []; sessions_list = []; scan_logs = []
         total_users = total_scans = total_threats = 0
         def val(r, k): return 0
-
     return render_template('admin.html',
         users=users, sessions_list=sessions_list, scan_logs=scan_logs,
         total_users=val(total_users, 'c'), total_scans=val(total_scans, 's'),
@@ -631,16 +612,10 @@ def unban_user():
     ph = '%s' if (POSTGRES and DATABASE_URL) else '?'
     db_execute(f'UPDATE users SET banned=0 WHERE email={ph}', (email,))
     return jsonify({'success': True})
-@app.route('/debug')
-def debug():
-    return jsonify({
-        'db_url': bool(DATABASE_URL),
-        'postgres': POSTGRES,
-        'db_url_preview': DATABASE_URL[:30] if DATABASE_URL else 'VIDE'
-    })
+
 @app.route('/health')
 def health():
-    return jsonify({'status': 'ok', 'version': '6.4', 'ai': bool(ANTHROPIC_API_KEY)})
+    return jsonify({'status': 'ok', 'ai': bool(ANTHROPIC_API_KEY)})
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
