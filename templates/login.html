@@ -2,74 +2,304 @@
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
+<link rel="icon" type="image/x-icon" href="/static/favicon.ico">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Teranga DEV — Connexion</title>
-<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Orbitron:wght@400;700;900&family=Rajdhani:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 :root {
-  --bg: #04060d; --bg2: #070c18; --bg3: #0a1020;
-  --border: #0f2040; --border2: #1a3a6a;
-  --acc: #00d4ff; --grn: #00ff88; --red: #ff2244;
-  --dim: #2a4a6a; --txt: #7ab8d8; --wht: #e0f0ff;
-  --mono: 'Space Mono', monospace; --sans: 'Syne', sans-serif;
+  --bg:     #020408;
+  --bg2:    #040810;
+  --bg3:    #06101a;
+  --panel:  rgba(6,16,26,0.9);
+  --border: rgba(0,200,255,0.08);
+  --border2:rgba(0,200,255,0.2);
+  --acc:    #00c8ff;
+  --acc2:   #0088cc;
+  --grn:    #00ff88;
+  --red:    #ff2244;
+  --dim:    #1a3a5a;
+  --txt:    #6ab0d0;
+  --wht:    #d8eeff;
+  --mono:   'JetBrains Mono', monospace;
+  --display:'Orbitron', sans-serif;
+  --ui:     'Rajdhani', sans-serif;
 }
-* { box-sizing: border-box; margin: 0; padding: 0; }
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
 body {
-  background: var(--bg); color: var(--txt);
-  font-family: var(--mono); min-height: 100vh;
-  display: flex; align-items: center; justify-content: center;
+  background: var(--bg);
+  color: var(--txt);
+  font-family: var(--mono);
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  cursor: none;
 }
+
+/* CURSOR */
+#cursor { position: fixed; width: 10px; height: 10px; background: var(--acc); border-radius: 50%; pointer-events: none; z-index: 9999; mix-blend-mode: screen; transition: transform 0.1s; }
+#cursor-ring { position: fixed; width: 32px; height: 32px; border: 1px solid rgba(0,200,255,0.4); border-radius: 50%; pointer-events: none; z-index: 9998; transition: transform 0.15s ease, width 0.2s, height 0.2s; }
+
+/* GRID */
 body::before {
-  content: ''; position: fixed; inset: 0;
+  content: '';
+  position: fixed; inset: 0;
   background-image:
-    linear-gradient(rgba(0,212,255,0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0,212,255,0.03) 1px, transparent 1px);
-  background-size: 40px 40px; pointer-events: none;
+    linear-gradient(rgba(0,200,255,0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,200,255,0.025) 1px, transparent 1px);
+  background-size: 48px 48px;
+  pointer-events: none; z-index: 0;
 }
+
+/* SCANLINES */
+body::after {
+  content: '';
+  position: fixed; inset: 0;
+  background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px);
+  pointer-events: none; z-index: 0;
+}
+
+canvas { position: fixed; inset: 0; z-index: 0; pointer-events: none; }
+
+/* CARD */
 .card {
+  position: relative;
+  z-index: 10;
+  background: var(--panel);
+  border: 1px solid var(--border2);
+  border-radius: 24px;
+  padding: 52px 44px;
+  text-align: center;
+  width: 100%;
+  max-width: 440px;
+  backdrop-filter: blur(24px) saturate(180%);
+  animation: cardIn 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;
+  overflow: hidden;
+}
+
+@keyframes cardIn {
+  from { opacity: 0; transform: translateY(40px) scale(0.95); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Top glow line */
+.card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 10%; right: 10%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--acc), transparent);
+  animation: glow-line 3s ease-in-out infinite;
+}
+
+@keyframes glow-line {
+  0%, 100% { opacity: 0.4; transform: scaleX(0.5); }
+  50% { opacity: 1; transform: scaleX(1); }
+}
+
+/* Corner accents */
+.card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at 50% 0%, rgba(0,200,255,0.05) 0%, transparent 60%);
+  pointer-events: none;
+}
+
+/* LOGO */
+.logo-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 80px; height: 80px;
+  margin: 0 auto 28px;
+}
+
+.logo-ring {
+  position: absolute; inset: 0;
+  border: 1px solid rgba(0,200,255,0.25);
+  border-radius: 50%;
+  animation: spin 8s linear infinite;
+}
+
+.logo-ring2 {
+  position: absolute; inset: 10px;
+  border: 1px dashed rgba(0,200,255,0.12);
+  border-radius: 50%;
+  animation: spin 5s linear infinite reverse;
+}
+
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+.logo-img {
+  width: 46px; height: 46px;
+  object-fit: contain;
+  filter: drop-shadow(0 0 12px var(--acc));
+  animation: logo-pulse 3s ease-in-out infinite;
   position: relative; z-index: 1;
-  background: var(--bg2); border: 1px solid var(--border2);
-  border-radius: 20px; padding: 50px 40px; text-align: center;
-  width: 100%; max-width: 420px;
 }
-.logo-icon {
-  width: 60px; height: 60px; border: 1.5px solid var(--acc);
-  border-radius: 14px; display: flex; align-items: center;
-  justify-content: center; background: rgba(0,212,255,0.05);
-  margin: 0 auto 20px; font-size: 28px;
+
+@keyframes logo-pulse {
+  0%, 100% { filter: drop-shadow(0 0 8px var(--acc)); }
+  50% { filter: drop-shadow(0 0 20px var(--acc)) drop-shadow(0 0 40px rgba(0,200,255,0.3)); }
 }
+
+.logo-hex-fallback {
+  width: 46px; height: 46px;
+  border: 1.5px solid var(--acc);
+  border-radius: 12px;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0,200,255,0.05);
+  font-size: 22px; color: var(--acc);
+  animation: logo-pulse 3s ease-in-out infinite;
+  position: relative; z-index: 1;
+}
+
+/* TITLE */
 .title {
-  font-family: var(--sans); font-size: 26px; font-weight: 800;
-  color: var(--wht); margin-bottom: 6px;
+  font-family: var(--display);
+  font-size: 26px;
+  font-weight: 900;
+  color: var(--wht);
+  letter-spacing: 3px;
+  margin-bottom: 6px;
+  animation: fadeInUp 0.8s ease both 0.2s;
 }
-.subtitle { color: var(--acc); font-size: 10px; letter-spacing: 3px; margin-bottom: 8px; }
-.desc { color: var(--dim); font-size: 12px; margin-bottom: 36px; line-height: 1.7; }
+
+.subtitle {
+  font-family: var(--ui);
+  font-size: 11px;
+  color: var(--acc);
+  letter-spacing: 4px;
+  text-transform: uppercase;
+  margin-bottom: 10px;
+  animation: fadeInUp 0.8s ease both 0.3s;
+}
+
+.desc {
+  font-family: var(--ui);
+  color: var(--dim);
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 36px;
+  line-height: 1.7;
+  animation: fadeInUp 0.8s ease both 0.4s;
+}
+
+@keyframes fadeInUp { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
+
+/* ERROR */
+.error {
+  background: rgba(255,34,68,0.08);
+  border: 1px solid rgba(255,34,68,0.25);
+  color: var(--red);
+  padding: 12px 16px;
+  border-radius: 10px;
+  margin-bottom: 20px;
+  font-size: 12px;
+  font-family: var(--ui);
+  font-weight: 500;
+  animation: fadeInUp 0.5s ease both;
+}
+
+/* GOOGLE BTN */
 .btn-google {
-  display: flex; align-items: center; justify-content: center; gap: 12px;
-  width: 100%; padding: 16px; border-radius: 12px;
-  background: var(--wht); color: #04060d;
-  border: none; cursor: pointer; font-family: var(--mono);
-  font-size: 13px; font-weight: 700; letter-spacing: 1px;
-  transition: all 0.2s; text-decoration: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  width: 100%;
+  padding: 16px;
+  border-radius: 12px;
+  background: var(--wht);
+  color: #020408;
+  border: none;
+  cursor: none;
+  font-family: var(--display);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-decoration: none;
+  transition: all 0.3s;
+  position: relative;
+  overflow: hidden;
+  animation: fadeInUp 0.8s ease both 0.5s;
+  box-shadow: 0 4px 20px rgba(0,200,255,0.15);
 }
-.btn-google:hover { background: #fff; transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,212,255,0.15); }
+
+.btn-google::before {
+  content: '';
+  position: absolute;
+  top: 0; left: -100%;
+  width: 100%; height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent);
+  animation: btn-shine 2.5s ease-in-out infinite;
+}
+
+@keyframes btn-shine { 0% { left: -100%; } 100% { left: 200%; } }
+
+.btn-google:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 32px rgba(0,200,255,0.25);
+}
+
 .btn-google svg { width: 20px; height: 20px; flex-shrink: 0; }
-.footer-txt { margin-top: 24px; color: var(--dim); font-size: 10px; letter-spacing: 1px; }
-.error { background: rgba(255,34,68,0.1); border: 1px solid rgba(255,34,68,0.3); color: var(--red); padding: 12px; border-radius: 8px; margin-bottom: 20px; font-size: 12px; }
+
+/* DIVIDER */
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 20px 0;
+  animation: fadeInUp 0.8s ease both 0.6s;
+}
+
+.divider-line { flex: 1; height: 1px; background: var(--border); }
+.divider-text { font-size: 9px; letter-spacing: 2px; color: var(--dim); font-family: var(--ui); }
+
+/* FOOTER */
+.footer-txt {
+  margin-top: 24px;
+  color: var(--dim);
+  font-size: 9px;
+  letter-spacing: 2px;
+  font-family: var(--ui);
+  font-weight: 600;
+  animation: fadeInUp 0.8s ease both 0.7s;
+}
 </style>
 </head>
 <body>
+
+<div id="cursor"></div>
+<div id="cursor-ring"></div>
+<canvas id="particles"></canvas>
+
 <div class="card">
-  <div class="logo-icon">⬡</div>
-  <div class="title">Teranga DEV</div>
-  <div class="subtitle">SECURITY SCANNER v6.3</div>
+  <div class="logo-wrap">
+    <div class="logo-ring"></div>
+    <div class="logo-ring2"></div>
+    <img src="/static/favicon.ico" alt="Teranga DEV" class="logo-img"
+      onerror="this.outerHTML='<div class=\'logo-hex-fallback\'>⬡</div>'">
+  </div>
+
+  <div class="title">TERANGA DEV</div>
+  <div class="subtitle">Security Scanner</div>
   <div class="desc">
     Connectez-vous pour accéder au scanner<br>
     de backdoors FiveM — Pays de la Teranga
   </div>
+
   {% if error %}
   <div class="error">{{ error }}</div>
   {% endif %}
+
   <a href="/google_login" class="btn-google">
     <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
       <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
@@ -79,7 +309,58 @@ body::before {
     </svg>
     CONTINUER AVEC GOOGLE
   </a>
+
   <div class="footer-txt">TERANGA DEV © 2026 — TARKALLA</div>
 </div>
+
+<script>
+// CURSOR
+const cursor = document.getElementById('cursor');
+const cursorRing = document.getElementById('cursor-ring');
+let mx = 0, my = 0, rx = 0, ry = 0;
+document.addEventListener('mousemove', e => {
+  mx = e.clientX; my = e.clientY;
+  cursor.style.left = (mx-5)+'px'; cursor.style.top = (my-5)+'px';
+});
+function animRing() {
+  rx += (mx-rx)*0.12; ry += (my-ry)*0.12;
+  cursorRing.style.left = (rx-16)+'px'; cursorRing.style.top = (ry-16)+'px';
+  requestAnimationFrame(animRing);
+}
+animRing();
+document.querySelectorAll('a, button').forEach(el => {
+  el.addEventListener('mouseenter', () => { cursor.style.transform='scale(2)'; cursorRing.style.width='54px'; cursorRing.style.height='54px'; });
+  el.addEventListener('mouseleave', () => { cursor.style.transform='scale(1)'; cursorRing.style.width='32px'; cursorRing.style.height='32px'; });
+});
+
+// PARTICLES
+const canvas = document.getElementById('particles');
+const ctx = canvas.getContext('2d');
+let W, H, particles = [];
+function resize() { W = canvas.width = window.innerWidth; H = canvas.height = window.innerHeight; }
+resize(); window.addEventListener('resize', resize);
+class Particle {
+  constructor() { this.reset(); }
+  reset() {
+    this.x = Math.random()*W; this.y = Math.random()*H;
+    this.vx = (Math.random()-0.5)*0.3; this.vy = (Math.random()-0.5)*0.3;
+    this.r = Math.random()*1.2+0.3; this.a = Math.random()*0.35+0.08;
+    this.color = Math.random()>0.7 ? '0,255,136' : '0,200,255';
+  }
+  update() { this.x+=this.vx; this.y+=this.vy; if(this.x<0||this.x>W||this.y<0||this.y>H) this.reset(); }
+  draw() { ctx.beginPath(); ctx.arc(this.x,this.y,this.r,0,Math.PI*2); ctx.fillStyle=`rgba(${this.color},${this.a})`; ctx.fill(); }
+}
+for(let i=0;i<60;i++) particles.push(new Particle());
+function anim() {
+  ctx.clearRect(0,0,W,H);
+  particles.forEach(p => { p.update(); p.draw(); });
+  for(let i=0;i<particles.length;i++) for(let j=i+1;j<particles.length;j++) {
+    const dx=particles[i].x-particles[j].x, dy=particles[i].y-particles[j].y, d=Math.sqrt(dx*dx+dy*dy);
+    if(d<90) { ctx.beginPath(); ctx.moveTo(particles[i].x,particles[i].y); ctx.lineTo(particles[j].x,particles[j].y); ctx.strokeStyle=`rgba(0,200,255,${0.05*(1-d/90)})`; ctx.lineWidth=0.4; ctx.stroke(); }
+  }
+  requestAnimationFrame(anim);
+}
+anim();
+</script>
 </body>
 </html>
