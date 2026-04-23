@@ -1415,8 +1415,14 @@ async function launchScan() {
     const newLi = Math.floor(prog / 30);
     if (newLi !== li && newLi < labels.length) { li = newLi; progressText.textContent = labels[li]; }
   }, 180);
-  const fd = new FormData();
-  selectedFiles.forEach(f => {
+  const SKIP_EXT = ['png','jpg','jpeg','gif','webp','ico','mp3','mp4','ogg','wav','db','sql','md','txt','xml','bat','sh','exe','dll','so','pak','ytd','ydr','yft','ybn','ymap','ytyp','ymt','dds','svg','woff2'];
+const fd = new FormData();
+selectedFiles.forEach(f => {
+  const ext = f.name.split('.').pop().toLowerCase();
+  if (!SKIP_EXT.includes(ext) && f.size < 5 * 1024 * 1024) {
+    fd.append('files', f);
+  }
+});
     // Evite d'uploader les gros/binary assets qui ne sont pas scannes
     const ext = f.name.split('.').pop().toLowerCase();
     const skipExt = ['yft', 'ytd', 'ydr', 'ybn', 'ymap', 'ytyp', 'ymt', 'dds', 'jpg', 'png', 'mp3', 'mp4'];
