@@ -426,8 +426,21 @@ def ai_analyze():
     if not content:
         return jsonify({'error': 'Contenu manquant'}), 400
 
-    # Limite le contenu pour éviter des tokens excessifs
-    content_preview = content[:10000] if len(content) > 10000 else content
+    # Extrait ciblé autour des lignes détectées
+lines = content.split('\n')
+target_lines = set()
+for f in findings[:10]:
+    if isinstance(f.get('line'), int):
+        for i in range(max(0, f['line']-10), min(len(lines), f['line']+10)):
+            target_lines.add(i)
+
+if target_lines:
+    excerpts = []
+    for i in sorted(target_lines):
+        excerpts.append(f"{i+1:4d} | {lines[i]}")
+    content_preview = '\n'.join(excerpts)
+else:
+    content_preview = content[:6000] if len(content) > 6000 else content
 
     findings_text = '\n'.join([
         f"- Ligne {f.get('line')}: [{f.get('category')}] {f.get('description')} — `{f.get('pattern','')[:80]}`"
