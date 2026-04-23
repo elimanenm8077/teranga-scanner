@@ -1416,7 +1416,14 @@ async function launchScan() {
     if (newLi !== li && newLi < labels.length) { li = newLi; progressText.textContent = labels[li]; }
   }, 180);
   const fd = new FormData();
-  selectedFiles.forEach(f => fd.append('files', f));
+  selectedFiles.forEach(f => {
+    // Evite d'uploader les gros/binary assets qui ne sont pas scannes
+    const ext = f.name.split('.').pop().toLowerCase();
+    const skipExt = ['yft', 'ytd', 'ydr', 'ybn', 'ymap', 'ytyp', 'ymt', 'dds', 'jpg', 'png', 'mp3', 'mp4'];
+    if (f.size < 5 * 1024 * 1024 && !skipExt.includes(ext)) {
+      fd.append('files', f);
+    }
+  });
   try {
     const res  = await fetch('/scan', { method: 'POST', body: fd });
     const data = await res.json();
