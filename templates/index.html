@@ -486,6 +486,15 @@ header::after {
   animation: float 3s ease-in-out infinite;
 }
 
+.upload-icon-img {
+  width: 44px; height: 44px;
+  object-fit: contain;
+  filter: drop-shadow(0 0 10px var(--acc));
+  animation: logo-pulse 3s ease-in-out infinite;
+  position: relative;
+  z-index: 1;
+}
+
 @keyframes float {
   0%, 100% { transform: translateY(0); }
   50% { transform: translateY(-6px); }
@@ -1005,7 +1014,7 @@ footer {
   <div class="hero-section">
     <div class="hero-badge">
       <span class="badge-dot"></span>
-      Teranga DEV · Security · v6.4
+      Teranga DEV · Security Scanner
     </div>
 
     <h1 class="hero-title">
@@ -1044,7 +1053,7 @@ footer {
         <div class="upload-icon-wrap">
           <div class="upload-icon-ring"></div>
           <div class="upload-icon-ring2"></div>
-          <span class="upload-icon">⬡</span>
+          <img src="/static/favicon.ico" alt="" class="upload-icon-img" onerror="this.outerHTML='<span class=\'upload-icon\'>⬡</span>'">
         </div>
         <div class="upload-title">DÉPOSEZ VOS FICHIERS</div>
         <div class="upload-desc">
