@@ -1112,6 +1112,7 @@ footer {
 
 <script>
 // ============ CURSOR ============
+let mouseX = 400, mouseY = 300;
 const cursor = document.getElementById('cursor');
 const cursorRing = document.getElementById('cursor-ring');
 let mx = 0, my = 0, rx = 0, ry = 0;
@@ -1149,7 +1150,6 @@ document.querySelectorAll('button, a, .result-header, .upload-zone').forEach(el 
 const canvas = document.getElementById('particles');
 const ctx = canvas.getContext('2d');
 let W, H;
-let mouseX = 400, mouseY = 300;
 
 function resize() {
   W = canvas.width  = window.innerWidth;
