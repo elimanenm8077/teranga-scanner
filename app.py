@@ -1,12 +1,18 @@
-import os, re, base64, math, zipfile, io, json, hashlib
+import os, re, base64, math, zipfile, io, json, hashlib, urllib.parse
 from pathlib import Path
 from flask import Flask, request, jsonify, render_template, redirect, url_for, session
-from datetime import datetime, timedelta
+from datetime import datetime
 from functools import wraps
-import sqlite3
 import time
+import requests
 
-from authlib.integrations.flask_client import OAuth
+try:
+    import psycopg2
+    import psycopg2.extras
+    POSTGRES = True
+except ImportError:
+    import sqlite3
+    POSTGRES = False
 
 try:
     import rarfile
@@ -18,69 +24,112 @@ app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'teranga-dev-secret-2026-tarkalla')
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024
 
-GOOGLE_CLIENT_ID     = os.environ.get('GOOGLE_CLIENT_ID', '')
-GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', '')
-ADMIN_EMAILS         = os.environ.get('ADMIN_EMAILS', '').split(',')
+CLIENT_ID         = "983810213589-ia9cukopmegpvt9jfj0s32e8bsl93s0s.apps.googleusercontent.com"
+CLIENT_SECRET     = "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"
+REDIRECT_URI      = "https://teranga-scanner.onrender.com/callback"
+ADMIN_EMAILS      = [e.strip() for e in os.environ.get('ADMIN_EMAILS', 'elimanenm8077@gmail.com').split(',')]
+ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
+GOOGLE_AUTH_URL   = "https://accounts.google.com/o/oauth2/v2/auth"
+GOOGLE_TOKEN_URL  = "https://oauth2.googleapis.com/token"
+GOOGLE_USER_URL   = "https://www.googleapis.com/oauth2/v2/userinfo"
+DATABASE_URL      = os.environ.get('DATABASE_URL', '')
 
 # ================================================================
 # DATABASE
 # ================================================================
 
 def get_db():
-    db = sqlite3.connect('scanner.db')
-    db.row_factory = sqlite3.Row
-    return db
+    if POSTGRES and DATABASE_URL:
+        return psycopg2.connect(DATABASE_URL)
+    else:
+        import sqlite3
+        conn = sqlite3.connect('/tmp/scanner.db')
+        conn.row_factory = sqlite3.Row
+        return conn
 
 def init_db():
-    with get_db() as db:
-        db.execute('''CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            email TEXT UNIQUE NOT NULL,
-            name TEXT,
-            picture TEXT,
-            created_at TEXT DEFAULT (datetime('now')),
-            last_seen TEXT,
-            scan_count INTEGER DEFAULT 0,
-            total_time INTEGER DEFAULT 0
+    conn = get_db()
+    cur = conn.cursor()
+    if POSTGRES and DATABASE_URL:
+        cur.execute('''CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY, email TEXT UNIQUE NOT NULL,
+            name TEXT, picture TEXT, created_at TIMESTAMP DEFAULT NOW(),
+            last_seen TIMESTAMP, scan_count INTEGER DEFAULT 0,
+            total_time INTEGER DEFAULT 0, banned INTEGER DEFAULT 0
         )''')
-        db.execute('''CREATE TABLE IF NOT EXISTS sessions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_email TEXT,
-            login_at TEXT DEFAULT (datetime('now')),
-            logout_at TEXT,
-            duration INTEGER DEFAULT 0,
-            scans_in_session INTEGER DEFAULT 0
+        cur.execute('''CREATE TABLE IF NOT EXISTS sessions (
+            id SERIAL PRIMARY KEY, user_email TEXT,
+            login_at TIMESTAMP DEFAULT NOW(), logout_at TIMESTAMP,
+            duration INTEGER DEFAULT 0, scans_in_session INTEGER DEFAULT 0
         )''')
-        db.execute('''CREATE TABLE IF NOT EXISTS scan_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_email TEXT,
-            scanned_at TEXT DEFAULT (datetime('now')),
-            files_count INTEGER,
-            threats_found INTEGER,
-            critical_count INTEGER
+        cur.execute('''CREATE TABLE IF NOT EXISTS scan_logs (
+            id SERIAL PRIMARY KEY, user_email TEXT,
+            scanned_at TIMESTAMP DEFAULT NOW(), files_count INTEGER,
+            threats_found INTEGER, critical_count INTEGER
         )''')
-        db.commit()
+    else:
+        cur.execute('''CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT UNIQUE NOT NULL,
+            name TEXT, picture TEXT, created_at TEXT DEFAULT (datetime('now')),
+            last_seen TEXT, scan_count INTEGER DEFAULT 0,
+            total_time INTEGER DEFAULT 0, banned INTEGER DEFAULT 0
+        )''')
+        try: cur.execute('ALTER TABLE users ADD COLUMN banned INTEGER DEFAULT 0')
+        except: pass
+        cur.execute('''CREATE TABLE IF NOT EXISTS sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_email TEXT,
+            login_at TEXT DEFAULT (datetime('now')), logout_at TEXT,
+            duration INTEGER DEFAULT 0, scans_in_session INTEGER DEFAULT 0
+        )''')
+        cur.execute('''CREATE TABLE IF NOT EXISTS scan_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_email TEXT,
+            scanned_at TEXT DEFAULT (datetime('now')), files_count INTEGER,
+            threats_found INTEGER, critical_count INTEGER
+        )''')
+    conn.commit(); cur.close(); conn.close()
 
 init_db()
 
-# ================================================================
-# OAUTH
-# ================================================================
+def db_execute(query, params=(), fetchone=False, fetchall=False):
+    conn = get_db()
+    if POSTGRES and DATABASE_URL:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        query = query.replace('?', '%s').replace("datetime('now')", "NOW()")
+    else:
+        cur = conn.cursor()
+    try:
+        cur.execute(query, params)
+        result = None
+        if fetchone:
+            row = cur.fetchone()
+            result = dict(row) if (row and POSTGRES and DATABASE_URL) else row
+        elif fetchall:
+            rows = cur.fetchall()
+            result = [dict(r) for r in rows] if (rows and POSTGRES and DATABASE_URL) else rows
+        conn.commit()
+        return result
+    except Exception as e:
+        conn.rollback(); raise e
+    finally:
+        cur.close(); conn.close()
 
-oauth = OAuth(app)
-google = oauth.register(
-    name='google',
-    client_id=GOOGLE_CLIENT_ID,
-    client_secret=GOOGLE_CLIENT_SECRET,
-    server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
-    client_kwargs={'scope': 'openid email profile'},
-)
+# ================================================================
+# AUTH
+# ================================================================
 
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         if not session.get('user'):
-            return redirect(url_for('login'))
+            return redirect(url_for('login_page'))
+        email = session['user'].get('email')
+        try:
+            ph = '%s' if (POSTGRES and DATABASE_URL) else '?'
+            u = db_execute(f'SELECT banned FROM users WHERE email={ph}', (email,), fetchone=True)
+            if u and (u['banned'] if isinstance(u, dict) else u[0]):
+                session.clear()
+                return redirect(url_for('login_page'))
+        except: pass
         return f(*args, **kwargs)
     return decorated
 
@@ -93,8 +142,72 @@ def admin_required(f):
         return f(*args, **kwargs)
     return decorated
 
+@app.route('/login')
+def login_page():
+    if session.get('user'):
+        return redirect(url_for('index'))
+    return render_template('login.html')
+
+@app.route('/google_login')
+def google_login():
+    params = {'client_id': CLIENT_ID, 'redirect_uri': REDIRECT_URI,
+              'response_type': 'code', 'scope': 'openid email profile', 'access_type': 'offline'}
+    return redirect(GOOGLE_AUTH_URL + '?' + urllib.parse.urlencode(params))
+
+@app.route('/callback')
+def callback():
+    code = request.args.get('code')
+    if not code: return redirect(url_for('login_page'))
+    try:
+        token_resp = requests.post(GOOGLE_TOKEN_URL, data={
+            'code': code, 'client_id': CLIENT_ID, 'client_secret': CLIENT_SECRET,
+            'redirect_uri': REDIRECT_URI, 'grant_type': 'authorization_code'})
+        token_data = token_resp.json()
+        access_token = token_data.get('access_token')
+        if not access_token: return redirect(url_for('login_page'))
+        user_resp = requests.get(GOOGLE_USER_URL, headers={'Authorization': f'Bearer {access_token}'})
+        user_info = user_resp.json()
+        email = user_info.get('email', '')
+        name = user_info.get('name', email)
+        picture = user_info.get('picture', '')
+        ph = '%s' if (POSTGRES and DATABASE_URL) else '?'
+        existing = db_execute(f'SELECT banned FROM users WHERE email={ph}', (email,), fetchone=True)
+        if existing and (existing['banned'] if isinstance(existing, dict) else existing[0]):
+            return render_template('login.html', error="Votre compte a été banni.")
+        if POSTGRES and DATABASE_URL:
+            db_execute('''INSERT INTO users (email, name, picture, last_seen) VALUES (%s,%s,%s,NOW())
+                          ON CONFLICT (email) DO UPDATE SET name=EXCLUDED.name, picture=EXCLUDED.picture, last_seen=NOW()''',
+                       (email, name, picture))
+        else:
+            db_execute('''INSERT INTO users (email, name, picture, last_seen) VALUES (?,?,?,datetime('now'))
+                          ON CONFLICT(email) DO UPDATE SET name=excluded.name, picture=excluded.picture, last_seen=datetime('now')''',
+                       (email, name, picture))
+        db_execute(f'INSERT INTO sessions (user_email) VALUES ({ph})', (email,))
+        session['user'] = {'email': email, 'name': name, 'picture': picture}
+        session['session_start'] = int(time.time())
+        session['session_scans'] = 0
+        return redirect(url_for('index'))
+    except: return redirect(url_for('login_page'))
+
+@app.route('/logout')
+def logout():
+    user = session.get('user')
+    if user:
+        start = session.get('session_start', int(time.time()))
+        duration = int(time.time()) - start
+        scans = session.get('session_scans', 0)
+        ph = '%s' if (POSTGRES and DATABASE_URL) else '?'
+        now = 'NOW()' if (POSTGRES and DATABASE_URL) else "datetime('now')"
+        try:
+            db_execute(f"UPDATE sessions SET logout_at={now}, duration={ph}, scans_in_session={ph} WHERE user_email={ph} AND logout_at IS NULL",
+                       (duration, scans, user['email']))
+            db_execute(f'UPDATE users SET total_time=total_time+{ph} WHERE email={ph}', (duration, user['email']))
+        except: pass
+    session.clear()
+    return redirect(url_for('login_page'))
+
 # ================================================================
-# SIGNATURES TERANGA DEV v6.3
+# SIGNATURES v6.3
 # ================================================================
 
 SIGNATURES_LUA = {
@@ -171,29 +284,19 @@ SIGNATURES_NUI = {
     ]
 }
 
-SIGNATURES_CFG = {
-    "CFG": [
-        (r"exec\s+https?://", 5, "Config distante"),
-    ]
-}
+SIGNATURES_CFG = {"CFG": [(r"exec\s+https?://", 5, "Config distante")]}
 
 WHITELIST_PATTERNS = [
     r"discord\.com/api/webhooks.*SendWebhookMessage",
     r"PerformHttpRequest.*version.*check",
     r"local\s+\w+\s*=\s*LoadResourceFile",
     r"if\s+not\s+IsDuplicityVersion\s*\(\s*\)",
-    r"_G\s*\[bridgeKey\]",
-    r"_G\s*\[k\]",
-    r"L\d+_\d+\s*=",
+    r"_G\s*\[bridgeKey\]", r"_G\s*\[k\]", r"L\d+_\d+\s*=",
     r"Protected by CheapM",
-    r"SaveResourceFile.*config",
-    r"SaveResourceFile.*settings",
-    r"SaveResourceFile.*zones",
-    r"SaveResourceFile.*items",
-    r"SaveResourceFile.*transcript",
-    r"SaveResourceFile.*log",
-    r"SaveResourceFile.*fix\.sql",
-    r"SaveResourceFile.*defaultdb",
+    r"SaveResourceFile.*config", r"SaveResourceFile.*settings",
+    r"SaveResourceFile.*zones", r"SaveResourceFile.*items",
+    r"SaveResourceFile.*transcript", r"SaveResourceFile.*log",
+    r"SaveResourceFile.*fix\.sql", r"SaveResourceFile.*defaultdb",
     r"os\.execute\s*\(\s*['\"]mkdir",
     r"GetConvar\s*\(['\"]rcon_password.*==",
     r"discord\.com/api/webhooks.*webhook\s*=",
@@ -209,10 +312,6 @@ WHITELIST_PATTERNS = [
 SKIP_EXTENSIONS = {'.png','.jpg','.jpeg','.gif','.webp','.ico','.mp3','.mp4','.ogg','.wav','.db','.sql','.md','.txt','.xml','.gitignore','.bat','.sh','.exe','.dll','.so','.pak','.ytd','.ydr','.yft','.ybn','.ymap','.ytyp','.ymt'}
 SCAN_EXTENSIONS  = {'.lua','.js','.cfg','.html','.htm','.ttf','.otf','.woff','.json'}
 SKIP_DIRS        = {'node_modules','dist','.git','__pycache__','vendor','.svn'}
-
-# ================================================================
-# SCANNER ENGINE
-# ================================================================
 
 def is_whitelisted(context):
     return any(re.search(p, context, re.I) for p in WHITELIST_PATTERNS)
@@ -235,90 +334,57 @@ def check_base64(content):
                 findings.append({"line": "b64", "category": "BASE64", "pattern": m[:60], "severity": 4, "description": f"Payload base64 => {d[:80]}"})
         except: pass
     return findings
-
 def check_hex(content):
     findings = []
     for m in re.finditer(r'(?:\\x[0-9a-fA-F]{2}){8,}', content):
         try:
             raw = m.group()
             decoded = bytes.fromhex(raw.replace('\\x', '')).decode('utf-8', errors='ignore')
-            keywords = ['tema-ninja', 'ketamin', 'cipher', 'PerformHttpRequest', 'loadstring', 'add_ace', 'gfxpanel', 'kvac']
+            keywords = ['tema-ninja','ketamin','cipher','PerformHttpRequest','loadstring','add_ace','gfxpanel','kvac']
             for kw in keywords:
                 if kw.lower() in decoded.lower():
                     findings.append({
                         "line": content[:m.start()].count('\n') + 1,
                         "category": "HEX ENCODE",
-                        "pattern": raw[:80],
+                        "pattern": m.group()[:80],
                         "severity": 5,
                         "description": f"String hex decodee => {decoded[:80]}"
                     })
                     break
-        except:
-            pass
+        except: pass
     return findings
-
 def scan_file(filename, content_bytes):
-    try:
-        content = content_bytes.decode('utf-8', errors='ignore')
-    except:
-        return {"file": filename, "findings": [], "score": 0, "risk_level": "CLEAN"}
-
-    if len(content) < 30:
-        return {"file": filename, "findings": [], "score": 0, "risk_level": "CLEAN"}
-
-    ext  = Path(filename).suffix.lower()
+    try: content = content_bytes.decode('utf-8', errors='ignore')
+    except: return {"file": filename, "findings": [], "score": 0, "risk_level": "CLEAN"}
+    if len(content) < 30: return {"file": filename, "findings": [], "score": 0, "risk_level": "CLEAN"}
+    ext = Path(filename).suffix.lower()
     name = Path(filename).name.lower()
-
-    if name == 'fxmanifest.lua' or ext == '.cfg':
-        sigs = SIGNATURES_CFG
-    elif ext in ('.html', '.htm'):
-        sigs = SIGNATURES_NUI
-    else:
-        sigs = SIGNATURES_LUA
-
+    if name == 'fxmanifest.lua' or ext == '.cfg': sigs = SIGNATURES_CFG
+    elif ext in ('.html', '.htm'): sigs = SIGNATURES_NUI
+    else: sigs = SIGNATURES_LUA
     lines = content.split('\n')
-    findings = []
-    score    = 0
-
+    findings = []; score = 0
     for cat, patterns in sigs.items():
         for pat, sev, desc in patterns:
             for m in re.finditer(pat, content, re.I | re.M):
                 ln = content[:m.start()].count('\n') + 1
-                ctx_start = max(0, ln - 4)
-                ctx_end   = min(len(lines), ln + 4)
+                ctx_start = max(0, ln - 4); ctx_end = min(len(lines), ln + 4)
                 ctx = '\n'.join(lines[ctx_start:ctx_end]).lower()
-                if is_whitelisted(ctx):
-                    continue
+                if is_whitelisted(ctx): continue
                 score += sev
-                findings.append({
-                    "line": ln, "category": cat,
-                    "pattern": m.group()[:150], "severity": sev,
-                    "description": desc,
-                    "context": '\n'.join(
-                        f"{'>>>' if i==ln-1 else '   '} {i+1:4d} | {lines[i].rstrip()}"
-                        for i in range(ctx_start, ctx_end)
-                    )
-                })
-
-    for f in check_base64(content):
-        score += f['severity']
-        findings.append(f)
-    for f in check_hex(content):
-        score += f['severity']
-        findings.append(f)
-
+                findings.append({"line": ln, "category": cat, "pattern": m.group()[:150], "severity": sev, "description": desc,
+                    "context": '\n'.join(f"{'>>>' if i==ln-1 else '   '} {i+1:4d} | {lines[i].rstrip()}" for i in range(ctx_start, ctx_end))})
+    for f in check_base64(content): score += f['severity']; findings.append(f)
+    for f in check_hex(content): score += f['severity']; findings.append(f)
     ent = entropy(content[:2000])
-    if ent > 6.2 and any('EXEC' in f['category'] or 'OBFUSC' in f['category'] for f in findings):
-        score += 2
-        findings.append({"line": "ent", "category": "ENTROPIE", "pattern": f"{ent:.2f}/8.0", "severity": 2, "description": "Obfuscation lourde detectee", "context": ""})
-
+    if ent > 6.2 and any('EXEC' in f['category'] for f in findings):
+        score += 2; findings.append({"line": "ent", "category": "ENTROPIE", "pattern": f"{ent:.2f}/8.0", "severity": 2, "description": "Obfuscation lourde", "context": ""})
     risk = "CLEAN" if score==0 else "LOW" if score<=3 else "MEDIUM" if score<=7 else "CRITICAL"
-    return {"file": filename, "score": score, "risk_level": risk, "findings": findings, "total_findings": len(findings)}
+    return {"file": filename, "score": score, "risk_level": risk, "findings": findings, "total_findings": len(findings), "content": content}
 
 def should_scan(filename):
-    ext   = Path(filename).suffix.lower()
-    parts = Path(filename).parts
-    for part in parts:
+    ext = Path(filename).suffix.lower()
+    for part in Path(filename).parts:
         if part in SKIP_DIRS: return False
     if ext in SKIP_EXTENSIONS: return False
     if ext not in SCAN_EXTENSIONS and ext != '': return False
@@ -329,7 +395,6 @@ def extract_and_scan(file_storage):
     content  = file_storage.read()
     ext      = Path(filename).suffix.lower()
     results  = []
-
     if ext == '.zip':
         try:
             with zipfile.ZipFile(io.BytesIO(content)) as zf:
@@ -339,11 +404,9 @@ def extract_and_scan(file_storage):
                             data = zf.read(name)
                             if len(data) < 2_000_000:
                                 r = scan_file(name, data)
-                                if r.get('findings') or r.get('score', 0) > 0:
-                                    results.append(r)
+                                if r.get('findings') or r.get('score', 0) > 0: results.append(r)
                         except: pass
-        except Exception as e:
-            results.append({"file": filename, "error": str(e), "findings": [], "score": 0, "risk_level": "ERREUR"})
+        except Exception as e: results.append({"file": filename, "error": str(e), "findings": [], "score": 0, "risk_level": "ERREUR"})
     elif ext == '.rar' and RAR_SUPPORT:
         try:
             rf = rarfile.RarFile(io.BytesIO(content))
@@ -353,78 +416,109 @@ def extract_and_scan(file_storage):
                         data = rf.read(name)
                         if len(data) < 2_000_000:
                             r = scan_file(name, data)
-                            if r.get('findings') or r.get('score', 0) > 0:
-                                results.append(r)
+                            if r.get('findings') or r.get('score', 0) > 0: results.append(r)
                     except: pass
-        except Exception as e:
-            results.append({"file": filename, "error": str(e), "findings": [], "score": 0, "risk_level": "ERREUR"})
+        except Exception as e: results.append({"file": filename, "error": str(e), "findings": [], "score": 0, "risk_level": "ERREUR"})
     else:
         if should_scan(filename):
             r = scan_file(filename, content)
-            if r.get('findings') or r.get('score', 0) > 0:
-                results.append(r)
-
+            if r.get('findings') or r.get('score', 0) > 0: results.append(r)
     return results
 
 # ================================================================
-# ROUTES AUTH
+# AGENT IA CLAUDE
 # ================================================================
 
-@app.route('/login')
-def login():
-    redirect_uri = url_for('callback', _external=True)
-    return google.authorize_redirect(redirect_uri)
+@app.route('/ai_analyze', methods=['POST'])
+@login_required
+def ai_analyze():
+    if not ANTHROPIC_API_KEY:
+        return jsonify({'error': 'API Claude non configurée'}), 500
 
-@app.route('/callback')
-def callback():
+    data = request.get_json()
+    filename = data.get('filename', '')
+    content  = data.get('content', '')
+    findings = data.get('findings', [])
+
+    if not content:
+        return jsonify({'error': 'Contenu manquant'}), 400
+
+    # Extrait ciblé autour des lignes détectées
+    lines = content.split('\n')
+    target_lines = set()
+    for f in findings[:10]:
+        if isinstance(f.get('line'), int):
+            for i in range(max(0, f['line']-10), min(len(lines), f['line']+10)):
+                target_lines.add(i)
+
+    if target_lines:
+        excerpts = []
+        for i in sorted(target_lines):
+            excerpts.append(f"{i+1:4d} | {lines[i]}")
+        content_preview = '\n'.join(excerpts)
+    else:
+        content_preview = content[:6000] if len(content) > 6000 else content
+
+    findings_text = '\n'.join([
+        f"- Ligne {f.get('line')}: [{f.get('category')}] {f.get('description')} — `{f.get('pattern','')[:80]}`"
+        for f in findings[:10]
+    ])
+
+    prompt = f"""Tu es un expert en sécurité FiveM spécialisé dans la détection de backdoors Lua.
+
+Fichier analysé : `{filename}`
+
+Détections confirmées par le scanner :
+{findings_text}
+
+Extrait du fichier autour des lignes détectées :
+```lua
+{content_preview}
+```
+
+Ta mission :
+1. Explique en français ce que font exactement les backdoors détectés (2-3 phrases max par backdoor)
+2. Donne le numéro exact de chaque ligne à supprimer avec le contenu exact de la ligne
+3. Explique pourquoi chaque ligne doit être supprimée
+IMPORTANT: Ces détections ont été confirmées par le scanner Teranga DEV avec des signatures précises et vérifiées. Fais confiance aux détections. Ne dis JAMAIS "faux positif" — ces signatures sont exactes et connues.
+
+Réponds UNIQUEMENT en JSON avec ce format :
+{{
+  "analyse": "explication claire des backdoors trouvés",
+  "lignes_supprimees": [
+    {{"ligne": 430, "contenu": "code exact de la ligne", "raison": "explication"}}
+  ]
+}}"""
+
     try:
-        token = google.authorize_access_token()
-        user_info = token.get('userinfo')
-        if not user_info:
-            import httpx
-            resp = httpx.get('https://www.googleapis.com/oauth2/v3/userinfo',
-                             headers={'Authorization': f'Bearer {token["access_token"]}'})
-            user_info = resp.json()
-
-        email   = user_info.get('email')
-        name    = user_info.get('name', email)
-        picture = user_info.get('picture', '')
-
-        with get_db() as db:
-            db.execute('''INSERT INTO users (email, name, picture, last_seen)
-                          VALUES (?, ?, ?, datetime('now'))
-                          ON CONFLICT(email) DO UPDATE SET
-                          name=excluded.name, picture=excluded.picture,
-                          last_seen=datetime('now')''', (email, name, picture))
-            db.execute('''INSERT INTO sessions (user_email, login_at)
-                          VALUES (?, datetime('now'))''', (email,))
-            db.commit()
-
-        session['user'] = {'email': email, 'name': name, 'picture': picture}
-        session['session_start'] = int(time.time())
-        session['session_scans'] = 0
-
-        return redirect(url_for('index'))
+        resp = requests.post(
+            'https://api.anthropic.com/v1/messages',
+            headers={
+                'x-api-key': ANTHROPIC_API_KEY,
+                'anthropic-version': '2023-06-01',
+                'content-type': 'application/json'
+            },
+            json={
+                'model': 'claude-sonnet-4-6',
+                'max_tokens': 4000,
+                'messages': [{'role': 'user', 'content': prompt}]
+            },
+            timeout=60
+        )
+        resp_data = resp.json()
+        if 'error' in resp_data:
+            return jsonify({'error': resp_data['error'].get('message', 'Erreur API Claude')}), 500
+        if 'content' not in resp_data:
+            return jsonify({'error': f'Réponse inattendue: {str(resp_data)[:200]}'}), 500
+        text = resp_data['content'][0]['text']
+        try:
+            json_match = re.search(r'\{.*\}', text, re.DOTALL)
+            result = json.loads(json_match.group()) if json_match else {'analyse': text, 'lignes_supprimees': []}
+        except:
+            result = {'analyse': text, 'lignes_supprimees': []}
+        return jsonify({'success': True, 'result': result, 'filename': filename})
     except Exception as e:
-        return redirect(url_for('login'))
-
-@app.route('/logout')
-def logout():
-    user = session.get('user')
-    if user:
-        start    = session.get('session_start', int(time.time()))
-        duration = int(time.time()) - start
-        scans    = session.get('session_scans', 0)
-        with get_db() as db:
-            db.execute('''UPDATE sessions SET logout_at=datetime('now'),
-                          duration=?, scans_in_session=?
-                          WHERE user_email=? AND logout_at IS NULL''',
-                       (duration, scans, user['email']))
-            db.execute('''UPDATE users SET total_time=total_time+?
-                          WHERE email=?''', (duration, user['email']))
-            db.commit()
-    session.clear()
-    return redirect(url_for('login'))
+        return jsonify({'error': str(e)}), 500
 
 # ================================================================
 # ROUTES PRINCIPALES
@@ -435,99 +529,112 @@ def logout():
 def index():
     user = session.get('user')
     is_admin = user and user.get('email') in ADMIN_EMAILS
-    return render_template('index.html', rar_support=RAR_SUPPORT, user=user, is_admin=is_admin)
+    ai_enabled = bool(ANTHROPIC_API_KEY)
+    return render_template('index.html', rar_support=RAR_SUPPORT, user=user, is_admin=is_admin, ai_enabled=ai_enabled)
 
 @app.route('/scan', methods=['POST'])
 @login_required
 def scan():
     files = request.files.getlist('files')
-    if not files:
-        return jsonify({'error': 'Aucun fichier recu'}), 400
-
+    if not files: return jsonify({'error': 'Aucun fichier recu'}), 400
     all_results = []
     for f in files:
         if not f.filename: continue
-        results = extract_and_scan(f)
-        all_results.extend(results)
-
+        all_results.extend(extract_and_scan(f))
+    for r in all_results:
+        r.pop('content', None)
     threats  = [r for r in all_results if r.get('findings')]
     critical = sum(1 for r in all_results if r.get('risk_level') == 'CRITICAL')
     medium   = sum(1 for r in all_results if r.get('risk_level') == 'MEDIUM')
     low      = sum(1 for r in all_results if r.get('risk_level') == 'LOW')
-
     user = session.get('user')
     if user:
         session['session_scans'] = session.get('session_scans', 0) + 1
-        with get_db() as db:
-            db.execute('UPDATE users SET scan_count=scan_count+1 WHERE email=?', (user['email'],))
-            db.execute('''INSERT INTO scan_logs (user_email, files_count, threats_found, critical_count)
-                          VALUES (?, ?, ?, ?)''', (user['email'], len(all_results), len(threats), critical))
-            db.commit()
-
+        ph = '%s' if (POSTGRES and DATABASE_URL) else '?'
+        try:
+            db_execute(f'UPDATE users SET scan_count=scan_count+1 WHERE email={ph}', (user['email'],))
+            db_execute(f'INSERT INTO scan_logs (user_email, files_count, threats_found, critical_count) VALUES ({ph},{ph},{ph},{ph})',
+                       (user['email'], len(all_results), len(threats), critical))
+        except: pass
     return jsonify({
         'results': all_results,
-        'stats': {
-            'scanned': len(all_results),
-            'threats': len(threats),
-            'critical': critical,
-            'medium':   medium,
-            'low':      low,
-            'clean':    len(all_results) - len(threats)
-        },
+        'stats': {'scanned': len(all_results), 'threats': len(threats), 'critical': critical, 'medium': medium, 'low': low, 'clean': len(all_results)-len(threats)},
         'date': datetime.now().strftime('%d/%m/%Y %H:%M:%S')
     })
 
 # ================================================================
-# ADMIN DASHBOARD
+# ADMIN
 # ================================================================
+
+def fmt_date(d):
+    if not d: return '—'
+    try: return str(d)[:16]
+    except: return '—'
 
 @app.route('/admin')
 @login_required
 @admin_required
 def admin():
-    with get_db() as db:
-        users = db.execute('''
-            SELECT u.*, COUNT(s.id) as session_count,
-                   SUM(s.scans_in_session) as total_scans_sessions
-            FROM users u
-            LEFT JOIN sessions s ON s.user_email = u.email
-            GROUP BY u.email
-            ORDER BY u.last_seen DESC
-        ''').fetchall()
-
-        sessions_list = db.execute('''
-            SELECT s.*, u.name
-            FROM sessions s
-            LEFT JOIN users u ON u.email = s.user_email
-            ORDER BY s.login_at DESC
-            LIMIT 50
-        ''').fetchall()
-
-        scan_logs = db.execute('''
-            SELECT sl.*, u.name
-            FROM scan_logs sl
-            LEFT JOIN users u ON u.email = sl.user_email
-            ORDER BY sl.scanned_at DESC
-            LIMIT 50
-        ''').fetchall()
-
-        total_users  = db.execute('SELECT COUNT(*) FROM users').fetchone()[0]
-        total_scans  = db.execute('SELECT SUM(scan_count) FROM users').fetchone()[0] or 0
-        total_threats = db.execute('SELECT SUM(threats_found) FROM scan_logs').fetchone()[0] or 0
-
+    try:
+        users_raw    = db_execute('SELECT u.*, COUNT(s.id) as session_count FROM users u LEFT JOIN sessions s ON s.user_email=u.email GROUP BY u.id, u.email, u.name, u.picture, u.created_at, u.last_seen, u.scan_count, u.total_time, u.banned ORDER BY u.last_seen DESC NULLS LAST', fetchall=True)
+        sessions_raw = db_execute('SELECT s.*, u.name FROM sessions s LEFT JOIN users u ON u.email=s.user_email ORDER BY s.login_at DESC LIMIT 50', fetchall=True)
+        logs_raw     = db_execute('SELECT sl.*, u.name FROM scan_logs sl LEFT JOIN users u ON u.email=sl.user_email ORDER BY sl.scanned_at DESC LIMIT 50', fetchall=True)
+        total_users   = db_execute('SELECT COUNT(*) as c FROM users', fetchone=True)
+        total_scans   = db_execute('SELECT SUM(scan_count) as s FROM users', fetchone=True)
+        total_threats = db_execute('SELECT SUM(threats_found) as t FROM scan_logs', fetchone=True)
+        def val(r, k): return (r.get(k) if isinstance(r, dict) else r[0]) or 0 if r else 0
+        users = []
+        for u in (users_raw or []):
+            row = dict(u)
+            row['created_at_fmt'] = fmt_date(row.get('created_at'))
+            row['last_seen_fmt']  = fmt_date(row.get('last_seen'))
+            users.append(row)
+        sessions_list = []
+        for s in (sessions_raw or []):
+            row = dict(s)
+            row['login_at_fmt']  = fmt_date(row.get('login_at'))
+            row['logout_at_fmt'] = fmt_date(row.get('logout_at'))
+            sessions_list.append(row)
+        scan_logs = []
+        for sl in (logs_raw or []):
+            row = dict(sl)
+            row['scanned_at_fmt'] = fmt_date(row.get('scanned_at'))
+            scan_logs.append(row)
+    except Exception as e:
+        users = []; sessions_list = []; scan_logs = []
+        total_users = total_scans = total_threats = 0
+        def val(r, k): return 0
     return render_template('admin.html',
-        users=users,
-        sessions_list=sessions_list,
-        scan_logs=scan_logs,
-        total_users=total_users,
-        total_scans=total_scans,
-        total_threats=total_threats,
-        admin_user=session.get('user')
-    )
+        users=users, sessions_list=sessions_list, scan_logs=scan_logs,
+        total_users=val(total_users, 'c'), total_scans=val(total_scans, 's'),
+        total_threats=val(total_threats, 't'),
+        admin_user=session.get('user'), admin_emails=ADMIN_EMAILS)
+
+@app.route('/admin/ban', methods=['POST'])
+@login_required
+@admin_required
+def ban_user():
+    data = request.get_json()
+    email = data.get('email')
+    if not email or email in ADMIN_EMAILS: return jsonify({'success': False, 'error': 'Action non autorisee'})
+    ph = '%s' if (POSTGRES and DATABASE_URL) else '?'
+    db_execute(f'UPDATE users SET banned=1 WHERE email={ph}', (email,))
+    return jsonify({'success': True})
+
+@app.route('/admin/unban', methods=['POST'])
+@login_required
+@admin_required
+def unban_user():
+    data = request.get_json()
+    email = data.get('email')
+    if not email: return jsonify({'success': False, 'error': 'Email manquant'})
+    ph = '%s' if (POSTGRES and DATABASE_URL) else '?'
+    db_execute(f'UPDATE users SET banned=0 WHERE email={ph}', (email,))
+    return jsonify({'success': True})
 
 @app.route('/health')
 def health():
-    return jsonify({'status': 'ok', 'version': '6.3', 'rar_support': RAR_SUPPORT})
+    return jsonify({'status': 'ok', 'ai': bool(ANTHROPIC_API_KEY)})
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
