@@ -427,7 +427,7 @@ def ai_analyze():
         return jsonify({'error': 'Contenu manquant'}), 400
 
     # Limite le contenu pour éviter des tokens excessifs
-    content_preview = content[:6000] if len(content) > 6000 else content
+    content_preview = content[:10000] if len(content) > 10000 else content
 
     findings_text = '\n'.join([
         f"- Ligne {f.get('line')}: [{f.get('category')}] {f.get('description')} — `{f.get('pattern','')[:80]}`"
@@ -450,6 +450,8 @@ Ta mission :
 1. Explique en français ce que font exactement les backdoors détectés (2-3 phrases max par backdoor)
 2. Donne le numéro exact de chaque ligne à supprimer avec le contenu exact de la ligne
 3. Explique pourquoi chaque ligne doit être supprimée
+4. Si une détection est un FAUX POSITIF (code légitime mal détecté), indique-le clairement dans l'analyse avec "FAUX POSITIF" et ne l'inclus pas dans lignes_supprimees
+IMPORTANT: Les détections ci-dessus ont été confirmées par le scanner Teranga DEV avec des signatures précises. Ne les considère PAS comme faux positifs sauf si tu vois clairement que le code est légitime dans l'extrait fourni. Si la ligne détectée n'est pas visible dans l'extrait, c'est parce que le fichier est trop long — les détections restent valides.
 
 Réponds en JSON avec ce format exact :
 {{
