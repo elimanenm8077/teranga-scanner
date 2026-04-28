@@ -287,7 +287,7 @@ SIGNATURES_NUI = {
 SIGNATURES_JS = {
     "XOR EVAL": [
         (r"eval\s*\(\s*\w+\s*\(\s*\w+\s*,\s*\w+\s*\)\s*\)", 5, "Tableau XOR + eval() backdoor obfusque"),
-        (r"String\.fromCharCode", 3, "String.fromCharCode - encodage suspect"),
+        (r"String\.fromCharCode.*eval|eval.*String\.fromCharCode", 4, "String.fromCharCode + eval() - encodage suspect"),
         (r"const\s+\w+\s*=\s*\[\s*\d+\s*,\s*\d+\s*,\s*\d+", 3, "Grand tableau numerique suspect"),
     ],
     "RCE": [
@@ -328,6 +328,12 @@ WHITELIST_PATTERNS = [
     r"discord\.com/api/webhooks.*give_vehicle",
     r"discord\.com/api/webhooks.*DiscordAnnounce",
     r"discord\.com/api/webhooks.*DiscordWebhook\s*=",
+    r"@fastify/busboy",
+    r"isomorphicDecode",
+    r"undici",
+    r"parseParams",
+    r"node_modules/discord",
+    r"parseMultipart",
 ]
 
 SKIP_EXTENSIONS = {'.png','.jpg','.jpeg','.gif','.webp','.ico','.mp3','.mp4','.ogg','.wav','.db','.sql','.md','.txt','.xml','.gitignore','.bat','.sh','.exe','.dll','.so','.pak','.ytd','.ydr','.yft','.ybn','.ymap','.ytyp','.ymt'}
