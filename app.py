@@ -287,7 +287,7 @@ SIGNATURES_NUI = {
 SIGNATURES_JS = {
     "XOR EVAL": [
         (r"eval\s*\(\s*\w+\s*\(\s*\w+\s*,\s*\w+\s*\)\s*\)", 5, "Tableau XOR + eval() backdoor obfusque"),
-        (r"String\.fromCharCode.*eval|eval.*String\.fromCharCode", 4, "String.fromCharCode + eval() - encodage suspect"),
+        (r"String\.fromCharCode.*\beval\s*\(|\beval\s*\(.*String\.fromCharCode", 4, "String.fromCharCode + eval() - encodage suspect"),
         (r"const\s+\w+\s*=\s*\[\s*\d+\s*,\s*\d+\s*,\s*\d+", 3, "Grand tableau numerique suspect"),
     ],
     "RCE": [
@@ -297,7 +297,7 @@ SIGNATURES_JS = {
     ],
     "EXFILTRATION JS": [
         (r"[Ss]teal[Rr]esult|[Ss]tealled[Dd]omain|[Ff]etched[Rr]esolver", 5, "Exfiltration de donnees"),
-        (r"process\.env.*https?://", 4, "Variables d'environnement envoyees vers serveur distant"),
+        (r"process\.env\.[A-Z_]+.*PerformHttpRequest|process\.env\.[A-Z_]+.*fetch\s*\(\s*['\"]https?://(?!localhost)", 4, "Variables d'environnement exfiltrées vers serveur distant"),
     ],
     "OBFUSCATION JS": [
         (r"eval\s*\(d[mM]\w+\(", 4, "eval() sur resultat fonction obfusquee"),
