@@ -284,6 +284,27 @@ SIGNATURES_NUI = {
     ]
 }
 
+SIGNATURES_JS = {
+    "XOR EVAL": [
+        (r"eval\s*\(\s*\w+\s*\(\s*\w+\s*,\s*\w+\s*\)\s*\)", 5, "Tableau XOR + eval() backdoor obfusque"),
+        (r"String\.fromCharCode", 3, "String.fromCharCode - encodage suspect"),
+        (r"const\s+\w+\s*=\s*\[\s*\d+\s*,\s*\d+\s*,\s*\d+", 3, "Grand tableau numerique suspect"),
+    ],
+    "RCE": [
+        (r"new\s+Function\s*\(\s*['\"]global['\"]", 5, "new Function('global') - RCE complet"),
+        (r"require\s*\(\s*Buffer\.from\s*\(", 5, "require() dissimule via Buffer.from base64"),
+        (r"require\s*\(\s*atob\s*\(", 5, "require() dissimule via atob"),
+    ],
+    "EXFILTRATION JS": [
+        (r"[Ss]teal[Rr]esult|[Ss]tealled[Dd]omain|[Ff]etched[Rr]esolver", 5, "Exfiltration de donnees"),
+        (r"process\.env.*https?://", 4, "Variables d'environnement envoyees vers serveur distant"),
+    ],
+    "OBFUSCATION JS": [
+        (r"eval\s*\(d[mM]\w+\(", 4, "eval() sur resultat fonction obfusquee"),
+        (r"Buffer\.from\s*\(['\"][A-Za-z0-9+/=]{20,}", 4, "URL encodee en base64 dans Buffer.from"),
+    ],
+}
+
 SIGNATURES_CFG = {"CFG": [(r"exec\s+https?://", 5, "Config distante")]}
 
 WHITELIST_PATTERNS = [
@@ -359,9 +380,14 @@ def scan_file(filename, content_bytes):
     if len(content) < 30: return {"file": filename, "findings": [], "score": 0, "risk_level": "CLEAN"}
     ext = Path(filename).suffix.lower()
     name = Path(filename).name.lower()
-    if name == 'fxmanifest.lua' or ext == '.cfg': sigs = SIGNATURES_CFG
-    elif ext in ('.html', '.htm'): sigs = SIGNATURES_NUI
-    else: sigs = SIGNATURES_LUA
+    if name == 'fxmanifest.lua' or ext == '.cfg':
+        sigs = SIGNATURES_CFG
+    elif ext in ('.html', '.htm'):
+        sigs = SIGNATURES_NUI
+    elif ext in ('.js', '.mjs', '.cjs', '.ts'):
+        sigs = SIGNATURES_JS
+    else:
+        sigs = SIGNATURES_LUA
     lines = content.split('\n')
     findings = []; score = 0
     for cat, patterns in sigs.items():
