@@ -37,7 +37,7 @@ Upload your files directly from the browser — no installation required.
 - Cipher hex byte tables
 - And more...
 
-## 🚀 Deploy on Railway
+## 🚀 Deploy on Render
 
 [![Deploy on Render](https://render.com/button.svg)](https://render.com/)
 
