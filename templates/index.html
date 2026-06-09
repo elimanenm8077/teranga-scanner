@@ -1366,14 +1366,24 @@ async function launchScan() {
     const newLi = Math.floor(prog / 30);
     if (newLi !== li && newLi < labels.length) { li = newLi; progressText.textContent = labels[li]; }
   }, 180);
-  const SKIP_EXT = ['png','jpg','jpeg','gif','webp','ico','mp3','mp4','ogg','wav','db','sql','md','txt','xml','bat','sh','exe','dll','so','pak','ytd','ydr','yft','ybn','ymap','ytyp','ymt','dds','svg','woff2'];
-  const fd = new FormData();
-  selectedFiles.forEach(f => {
+  const SKIP_EXT = new Set(['png','jpg','jpeg','gif','webp','ico','mp3','mp4','ogg','wav','db','sql','md','txt','xml','bat','sh','exe','dll','so','pak','ytd','ydr','yft','ybn','ymap','ytyp','ymt','dds','svg','woff','woff2','meta','ydd','yld','rpf','nametable','gtxd']);
+
+  const filesToSend = Array.from(selectedFiles).filter(f => {
     const ext = f.name.split('.').pop().toLowerCase();
-    if (!SKIP_EXT.includes(ext) && f.size < 5 * 1024 * 1024) {
-      fd.append('files', f);
-    }
+    return !SKIP_EXT.has(ext) && f.size < 50 * 1024 * 1024;
   });
+
+  if (filesToSend.length === 0) {
+    clearInterval(anim);
+    progressText.textContent = 'AUCUN FICHIER SCANNABLE DÉTECTÉ';
+    progressPct.textContent  = '—';
+    progressFill.style.width = '0%';
+    btn.disabled = false;
+    return;
+  }
+
+  const fd = new FormData();
+  filesToSend.forEach(f => fd.append('files', f));
   try {
     const res  = await fetch('/scan', { method: 'POST', body: fd });
     const data = await res.json();
