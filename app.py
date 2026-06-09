@@ -59,7 +59,7 @@ DATABASE_URL      = os.environ.get('DATABASE_URL', '')
 # Use scanner_sessions on Postgres to avoid conflict with TSC sessions table on Neon
 SESSIONS_TABLE = 'scanner_sessions' if (POSTGRES and DATABASE_URL) else 'sessions'
 
-MAX_FILES_PER_REQUEST = 10
+MAX_FILES_PER_REQUEST = 200
 MAX_FILE_SIZE_BYTES   = 50 * 1024 * 1024  # 50 MB
 
 # ================================================================
@@ -128,8 +128,8 @@ def init_db():
         )''')
         cur.execute('''CREATE TABLE IF NOT EXISTS scan_logs (
             id SERIAL PRIMARY KEY, user_email TEXT,
-            scanned_at TIMESTAMP DEFAULT NOW(), files_count INTEGER,
-            threats_found INTEGER, critical_count INTEGER
+            "scannedAt" TIMESTAMP DEFAULT NOW(), "filesScanned" INTEGER,
+            "threatsFound" INTEGER, critical_count INTEGER
         )''')
     else:
         cur.execute('''CREATE TABLE IF NOT EXISTS users (
@@ -692,9 +692,14 @@ def scan():
         ph = '%s' if (POSTGRES and DATABASE_URL) else '?'
         try:
             db_execute(f'UPDATE users SET scan_count=scan_count+1 WHERE email={ph}', (user['email'],))
-            db_execute(
-                f'INSERT INTO scan_logs (user_email, files_count, threats_found, critical_count) VALUES ({ph},{ph},{ph},{ph})',
-                (user['email'], len(all_results), len(threats), critical))
+            if POSTGRES and DATABASE_URL:
+                db_execute(
+                    'INSERT INTO scan_logs (user_email, "filesScanned", "threatsFound", critical_count) VALUES (%s,%s,%s,%s)',
+                    (user['email'], len(all_results), len(threats), critical))
+            else:
+                db_execute(
+                    'INSERT INTO scan_logs (user_email, files_count, threats_found, critical_count) VALUES (?,?,?,?)',
+                    (user['email'], len(all_results), len(threats), critical))
         except Exception as e:
             logger.error("scan DB update failed email=%s: %s", user.get('email'), e)
         logger.info("scan id=%s user=%s files=%d threats=%d critical=%d",
@@ -726,12 +731,12 @@ def admin():
     users_raw = []
     try:
         users_raw = db_execute(
-            f'SELECT u.id, u.email, u.name, u.picture, u.last_seen, u.scan_count, u.banned, '
+            f'SELECT u.id, u.email, u.name, u.picture, u.created_at, u.last_seen, u.scan_count, u.total_time, u.banned, '
             f'COUNT(ss.id) as session_count '
             f'FROM users u '
             f'LEFT JOIN {SESSIONS_TABLE} ss ON ss.user_email = u.email '
             f'WHERE u.email IS NOT NULL '
-            f'GROUP BY u.id, u.email, u.name, u.picture, u.last_seen, u.scan_count, u.banned '
+            f'GROUP BY u.id, u.email, u.name, u.picture, u.created_at, u.last_seen, u.scan_count, u.total_time, u.banned '
             f'ORDER BY u.last_seen DESC NULLS LAST',
             fetchall=True) or []
     except Exception as e:
@@ -749,19 +754,30 @@ def admin():
 
     logs_raw = []
     try:
-        logs_raw = db_execute(
-            'SELECT sl.*, u.name FROM scan_logs sl '
-            'LEFT JOIN users u ON u.email = sl.user_email '
-            'ORDER BY sl.scanned_at DESC LIMIT 50',
-            fetchall=True) or []
+        if POSTGRES and DATABASE_URL:
+            logs_raw = db_execute(
+                'SELECT sl.user_email, sl."scannedAt" as scanned_at, sl."filesScanned" as files_count, '
+                'sl."threatsFound" as threats_found, sl.critical_count, u.name '
+                'FROM scan_logs sl LEFT JOIN users u ON u.email=sl.user_email '
+                'ORDER BY sl."scannedAt" DESC LIMIT 50',
+                fetchall=True) or []
+        else:
+            logs_raw = db_execute(
+                'SELECT sl.*, u.name FROM scan_logs sl '
+                'LEFT JOIN users u ON u.email=sl.user_email '
+                'ORDER BY sl.scanned_at DESC LIMIT 50',
+                fetchall=True) or []
     except Exception as e:
         logger.error("admin logs_raw error: %s", e)
 
     total_users = total_scans = total_threats = None
     try:
-        total_users   = db_execute(f'SELECT COUNT(DISTINCT user_email) as c FROM {SESSIONS_TABLE}', fetchone=True)
-        total_scans   = db_execute('SELECT SUM(scan_count) as s FROM users WHERE email IS NOT NULL', fetchone=True)
-        total_threats = db_execute('SELECT SUM(threats_found) as t FROM scan_logs', fetchone=True)
+        total_users = db_execute(f'SELECT COUNT(DISTINCT user_email) as c FROM {SESSIONS_TABLE}', fetchone=True)
+        total_scans = db_execute('SELECT SUM(scan_count) as s FROM users WHERE email IS NOT NULL', fetchone=True)
+        if POSTGRES and DATABASE_URL:
+            total_threats = db_execute('SELECT SUM("threatsFound") as t FROM scan_logs', fetchone=True)
+        else:
+            total_threats = db_execute('SELECT SUM(threats_found) as t FROM scan_logs', fetchone=True)
     except Exception as e:
         logger.error("admin stats error: %s", e)
 
@@ -826,15 +842,17 @@ def unban_user():
 def api_stats():
     try:
         if POSTGRES and DATABASE_URL:
-            recent_q = "SELECT COUNT(*) as c FROM scan_logs WHERE scanned_at > NOW() - INTERVAL '24 hours'"
+            recent_q       = "SELECT COUNT(*) as c FROM scan_logs WHERE \"scannedAt\" > NOW() - INTERVAL '24 hours'"
+            total_threats  = db_execute('SELECT COALESCE(SUM("threatsFound"), 0) as t FROM scan_logs', fetchone=True)
+            total_critical = db_execute('SELECT COALESCE(SUM(critical_count), 0) as cr FROM scan_logs', fetchone=True)
         else:
-            recent_q = "SELECT COUNT(*) as c FROM scan_logs WHERE scanned_at > datetime('now','-1 day')"
+            recent_q       = "SELECT COUNT(*) as c FROM scan_logs WHERE scanned_at > datetime('now','-1 day')"
+            total_threats  = db_execute('SELECT COALESCE(SUM(threats_found), 0) as t FROM scan_logs', fetchone=True)
+            total_critical = db_execute('SELECT COALESCE(SUM(critical_count), 0) as cr FROM scan_logs', fetchone=True)
 
-        total_users    = db_execute(f'SELECT COUNT(DISTINCT user_email) as c FROM {SESSIONS_TABLE}', fetchone=True)
-        total_scans    = db_execute('SELECT COALESCE(SUM(scan_count), 0) as s FROM users WHERE email IS NOT NULL', fetchone=True)
-        total_threats  = db_execute('SELECT COALESCE(SUM(threats_found), 0) as t FROM scan_logs', fetchone=True)
-        total_critical = db_execute('SELECT COALESCE(SUM(critical_count), 0) as cr FROM scan_logs', fetchone=True)
-        scans_24h      = db_execute(recent_q, fetchone=True)
+        total_users = db_execute(f'SELECT COUNT(DISTINCT user_email) as c FROM {SESSIONS_TABLE}', fetchone=True)
+        total_scans = db_execute('SELECT COALESCE(SUM(scan_count), 0) as s FROM users WHERE email IS NOT NULL', fetchone=True)
+        scans_24h   = db_execute(recent_q, fetchone=True)
 
         def val(r, k): return (r.get(k) if isinstance(r, dict) else r[0]) or 0 if r else 0
 
