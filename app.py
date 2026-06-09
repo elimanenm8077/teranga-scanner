@@ -187,7 +187,11 @@ def callback():
         session['session_start'] = int(time.time())
         session['session_scans'] = 0
         return redirect(url_for('index'))
-    except: return redirect(url_for('login_page'))
+    except Exception as e:
+        import traceback
+        print(f"[CALLBACK ERROR] {e}")
+        traceback.print_exc()
+        return redirect(url_for('login_page'))
 
 @app.route('/logout')
 def logout():
