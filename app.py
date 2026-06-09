@@ -515,28 +515,30 @@ def extract_and_scan(file_storage):
         try:
             with zipfile.ZipFile(io.BytesIO(content)) as zf:
                 for name in zf.namelist():
-                    if should_scan(name) and not name.endswith('/'):
-                        try:
-                            data = zf.read(name)
-                            if len(data) < 2_000_000:
-                                r = scan_file(name, data)
-                                if r.get('findings') or r.get('score', 0) > 0: results.append(r)
-                        except Exception:
-                            pass
+                    if not should_scan(name) or name.endswith('/'):
+                        continue
+                    try:
+                        data = zf.read(name)
+                        if len(data) < 2_000_000:
+                            r = scan_file(name, data)
+                            if r.get('findings') or r.get('score', 0) > 0: results.append(r)
+                    except Exception:
+                        pass
         except Exception as e:
             results.append({"file": filename, "error": str(e), "findings": [], "score": 0, "risk_level": "ERREUR"})
     elif ext == '.rar' and RAR_SUPPORT:
         try:
             rf = rarfile.RarFile(io.BytesIO(content))
             for name in rf.namelist():
-                if should_scan(name) and not name.endswith('/'):
-                    try:
-                        data = rf.read(name)
-                        if len(data) < 2_000_000:
-                            r = scan_file(name, data)
-                            if r.get('findings') or r.get('score', 0) > 0: results.append(r)
-                    except Exception:
-                        pass
+                if not should_scan(name) or name.endswith('/'):
+                    continue
+                try:
+                    data = rf.read(name)
+                    if len(data) < 2_000_000:
+                        r = scan_file(name, data)
+                        if r.get('findings') or r.get('score', 0) > 0: results.append(r)
+                except Exception:
+                    pass
         except Exception as e:
             results.append({"file": filename, "error": str(e), "findings": [], "score": 0, "risk_level": "ERREUR"})
     else:
