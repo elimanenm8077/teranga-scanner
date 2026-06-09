@@ -1,8 +1,10 @@
-import os, re, base64, math, zipfile, io, json, hashlib, urllib.parse
+import os, re, base64, math, zipfile, io, json, hashlib, urllib.parse, logging, uuid
 from pathlib import Path
 from flask import Flask, request, jsonify, render_template, redirect, url_for, session
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import wraps
+from collections import defaultdict
+import threading
 import time
 import requests
 
@@ -20,19 +22,81 @@ try:
 except ImportError:
     RAR_SUPPORT = False
 
-app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', 'teranga-dev-secret-2026-tarkalla')
-app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024
+# ================================================================
+# LOGGING
+# ================================================================
 
-CLIENT_ID         = "983810213589-ia9cukopmegpvt9jfj0s32e8bsl93s0s.apps.googleusercontent.com"
-CLIENT_SECRET     = "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"
-REDIRECT_URI      = "https://teranga-scanner.onrender.com/callback"
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s'
+)
+logger = logging.getLogger('teranga')
+
+# ================================================================
+# APP CONFIG
+# ================================================================
+
+app = Flask(__name__)
+
+_secret_key = os.environ.get('SECRET_KEY')
+if not _secret_key:
+    _secret_key = os.urandom(32).hex()
+    logger.warning("SECRET_KEY not set — sessions will not persist across restarts")
+app.secret_key = _secret_key
+app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=24)
+
+CLIENT_ID         = os.environ.get('GOOGLE_CLIENT_ID', '')
+CLIENT_SECRET     = os.environ.get('GOOGLE_CLIENT_SECRET', '')
+REDIRECT_URI      = os.environ.get('GOOGLE_REDIRECT_URI', 'https://teranga-scanner.onrender.com/callback')
 ADMIN_EMAILS      = [e.strip() for e in os.environ.get('ADMIN_EMAILS', 'elimanenm8077@gmail.com').split(',')]
 ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
 GOOGLE_AUTH_URL   = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL  = "https://oauth2.googleapis.com/token"
 GOOGLE_USER_URL   = "https://www.googleapis.com/oauth2/v2/userinfo"
 DATABASE_URL      = os.environ.get('DATABASE_URL', '')
+
+# Use scanner_sessions on Postgres to avoid conflict with TSC sessions table on Neon
+SESSIONS_TABLE = 'scanner_sessions' if (POSTGRES and DATABASE_URL) else 'sessions'
+
+MAX_FILES_PER_REQUEST = 10
+MAX_FILE_SIZE_BYTES   = 50 * 1024 * 1024  # 50 MB
+
+# ================================================================
+# RATE LIMITING (in-process, per IP per route)
+# ================================================================
+
+_rl_store: dict = defaultdict(list)
+_rl_lock = threading.Lock()
+
+def rate_limit(max_calls: int, period: int):
+    def decorator(f):
+        @wraps(f)
+        def decorated(*args, **kwargs):
+            ip = request.remote_addr or 'unknown'
+            key = f"{ip}:{f.__name__}"
+            now = time.time()
+            with _rl_lock:
+                _rl_store[key] = [t for t in _rl_store[key] if now - t < period]
+                if len(_rl_store[key]) >= max_calls:
+                    logger.warning("rate_limit exceeded ip=%s route=%s", ip, request.path)
+                    return jsonify({'error': 'Trop de requêtes, réessayez plus tard.'}), 429
+                _rl_store[key].append(now)
+            return f(*args, **kwargs)
+        return decorated
+    return decorator
+
+# ================================================================
+# CORS — API routes only
+# ================================================================
+
+@app.after_request
+def add_api_cors(response):
+    if request.path.startswith('/api/'):
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+    return response
 
 # ================================================================
 # DATABASE
@@ -57,7 +121,7 @@ def init_db():
             last_seen TIMESTAMP, scan_count INTEGER DEFAULT 0,
             total_time INTEGER DEFAULT 0, banned INTEGER DEFAULT 0
         )''')
-        cur.execute('''CREATE TABLE IF NOT EXISTS sessions (
+        cur.execute('''CREATE TABLE IF NOT EXISTS scanner_sessions (
             id SERIAL PRIMARY KEY, user_email TEXT,
             login_at TIMESTAMP DEFAULT NOW(), logout_at TIMESTAMP,
             duration INTEGER DEFAULT 0, scans_in_session INTEGER DEFAULT 0
@@ -75,7 +139,7 @@ def init_db():
             total_time INTEGER DEFAULT 0, banned INTEGER DEFAULT 0
         )''')
         try: cur.execute('ALTER TABLE users ADD COLUMN banned INTEGER DEFAULT 0')
-        except: pass
+        except Exception: pass
         cur.execute('''CREATE TABLE IF NOT EXISTS sessions (
             id INTEGER PRIMARY KEY AUTOINCREMENT, user_email TEXT,
             login_at TEXT DEFAULT (datetime('now')), logout_at TEXT,
@@ -129,7 +193,8 @@ def login_required(f):
             if u and (u['banned'] if isinstance(u, dict) else u[0]):
                 session.clear()
                 return redirect(url_for('login_page'))
-        except: pass
+        except Exception as e:
+            logger.error("login_required ban check failed email=%s: %s", email, e)
         return f(*args, **kwargs)
     return decorated
 
@@ -149,7 +214,11 @@ def login_page():
     return render_template('login.html')
 
 @app.route('/google_login')
+@rate_limit(5, 60)
 def google_login():
+    if not CLIENT_ID:
+        logger.error("GOOGLE_CLIENT_ID not configured")
+        return render_template('login.html', error="OAuth non configuré. Contactez l'administrateur.")
     params = {'client_id': CLIENT_ID, 'redirect_uri': REDIRECT_URI,
               'response_type': 'code', 'scope': 'openid email profile', 'access_type': 'offline'}
     return redirect(GOOGLE_AUTH_URL + '?' + urllib.parse.urlencode(params))
@@ -164,7 +233,9 @@ def callback():
             'redirect_uri': REDIRECT_URI, 'grant_type': 'authorization_code'})
         token_data = token_resp.json()
         access_token = token_data.get('access_token')
-        if not access_token: return redirect(url_for('login_page'))
+        if not access_token:
+            logger.error("OAuth callback: no access_token; response=%s", str(token_data)[:200])
+            return redirect(url_for('login_page'))
         user_resp = requests.get(GOOGLE_USER_URL, headers={'Authorization': f'Bearer {access_token}'})
         user_info = user_resp.json()
         email = user_info.get('email', '')
@@ -182,15 +253,16 @@ def callback():
             db_execute('''INSERT INTO users (email, name, picture, last_seen) VALUES (?,?,?,datetime('now'))
                           ON CONFLICT(email) DO UPDATE SET name=excluded.name, picture=excluded.picture, last_seen=datetime('now')''',
                        (email, name, picture))
-        db_execute(f'INSERT INTO sessions (user_email) VALUES ({ph})', (email,))
+        db_execute(f'INSERT INTO {SESSIONS_TABLE} (user_email) VALUES ({ph})', (email,))
+        session.permanent = True
         session['user'] = {'email': email, 'name': name, 'picture': picture}
         session['session_start'] = int(time.time())
         session['session_scans'] = 0
+        logger.info("user login email=%s", email)
         return redirect(url_for('index'))
     except Exception as e:
         import traceback
-        print(f"[CALLBACK ERROR] {e}")
-        traceback.print_exc()
+        logger.error("OAuth callback error: %s\n%s", e, traceback.format_exc())
         return redirect(url_for('login_page'))
 
 @app.route('/logout')
@@ -201,12 +273,16 @@ def logout():
         duration = int(time.time()) - start
         scans = session.get('session_scans', 0)
         ph = '%s' if (POSTGRES and DATABASE_URL) else '?'
-        now = 'NOW()' if (POSTGRES and DATABASE_URL) else "datetime('now')"
+        now_sql = 'NOW()' if (POSTGRES and DATABASE_URL) else "datetime('now')"
         try:
-            db_execute(f"UPDATE sessions SET logout_at={now}, duration={ph}, scans_in_session={ph} WHERE user_email={ph} AND logout_at IS NULL",
-                       (duration, scans, user['email']))
+            db_execute(
+                f"UPDATE {SESSIONS_TABLE} SET logout_at={now_sql}, duration={ph}, scans_in_session={ph} "
+                f"WHERE user_email={ph} AND logout_at IS NULL",
+                (duration, scans, user['email']))
             db_execute(f'UPDATE users SET total_time=total_time+{ph} WHERE email={ph}', (duration, user['email']))
-        except: pass
+        except Exception as e:
+            logger.error("logout DB update failed email=%s: %s", user.get('email'), e)
+        logger.info("user logout email=%s duration=%ds scans=%d", user.get('email'), duration, scans)
     session.clear()
     return redirect(url_for('login_page'))
 
@@ -363,8 +439,10 @@ def check_base64(content):
             keywords = ['loadstring','PerformHttpRequest','ExecuteCommand','add_ace','gfxpanel','kvac','cipher','blum','bxor','ketamin','tema-ninja']
             if any(k in d for k in keywords):
                 findings.append({"line": "b64", "category": "BASE64", "pattern": m[:60], "severity": 4, "description": f"Payload base64 => {d[:80]}"})
-        except: pass
+        except Exception:
+            pass
     return findings
+
 def check_hex(content):
     findings = []
     for m in re.finditer(r'(?:\\x[0-9a-fA-F]{2}){8,}', content):
@@ -382,11 +460,13 @@ def check_hex(content):
                         "description": f"String hex decodee => {decoded[:80]}"
                     })
                     break
-        except: pass
+        except Exception:
+            pass
     return findings
+
 def scan_file(filename, content_bytes):
     try: content = content_bytes.decode('utf-8', errors='ignore')
-    except: return {"file": filename, "findings": [], "score": 0, "risk_level": "CLEAN"}
+    except Exception: return {"file": filename, "findings": [], "score": 0, "risk_level": "CLEAN"}
     if len(content) < 30: return {"file": filename, "findings": [], "score": 0, "risk_level": "CLEAN"}
     ext = Path(filename).suffix.lower()
     name = Path(filename).name.lower()
@@ -441,8 +521,10 @@ def extract_and_scan(file_storage):
                             if len(data) < 2_000_000:
                                 r = scan_file(name, data)
                                 if r.get('findings') or r.get('score', 0) > 0: results.append(r)
-                        except: pass
-        except Exception as e: results.append({"file": filename, "error": str(e), "findings": [], "score": 0, "risk_level": "ERREUR"})
+                        except Exception:
+                            pass
+        except Exception as e:
+            results.append({"file": filename, "error": str(e), "findings": [], "score": 0, "risk_level": "ERREUR"})
     elif ext == '.rar' and RAR_SUPPORT:
         try:
             rf = rarfile.RarFile(io.BytesIO(content))
@@ -453,8 +535,10 @@ def extract_and_scan(file_storage):
                         if len(data) < 2_000_000:
                             r = scan_file(name, data)
                             if r.get('findings') or r.get('score', 0) > 0: results.append(r)
-                    except: pass
-        except Exception as e: results.append({"file": filename, "error": str(e), "findings": [], "score": 0, "risk_level": "ERREUR"})
+                    except Exception:
+                        pass
+        except Exception as e:
+            results.append({"file": filename, "error": str(e), "findings": [], "score": 0, "risk_level": "ERREUR"})
     else:
         if should_scan(filename):
             r = scan_file(filename, content)
@@ -479,7 +563,6 @@ def ai_analyze():
     if not content:
         return jsonify({'error': 'Contenu manquant'}), 400
 
-    # Extrait ciblé autour des lignes détectées
     lines = content.split('\n')
     target_lines = set()
     for f in findings[:10]:
@@ -550,10 +633,11 @@ Réponds UNIQUEMENT en JSON avec ce format :
         try:
             json_match = re.search(r'\{.*\}', text, re.DOTALL)
             result = json.loads(json_match.group()) if json_match else {'analyse': text, 'lignes_supprimees': []}
-        except:
+        except Exception:
             result = {'analyse': text, 'lignes_supprimees': []}
         return jsonify({'success': True, 'result': result, 'filename': filename})
     except Exception as e:
+        logger.error("ai_analyze error: %s", e)
         return jsonify({'error': str(e)}), 500
 
 # ================================================================
@@ -570,33 +654,61 @@ def index():
 
 @app.route('/scan', methods=['POST'])
 @login_required
+@rate_limit(30, 60)
 def scan():
+    scan_id = str(uuid.uuid4())
     files = request.files.getlist('files')
-    if not files: return jsonify({'error': 'Aucun fichier recu'}), 400
+    if not files:
+        return jsonify({'error': 'Aucun fichier recu'}), 400
+    if len(files) > MAX_FILES_PER_REQUEST:
+        return jsonify({'error': f'Maximum {MAX_FILES_PER_REQUEST} fichiers par requête'}), 400
+
     all_results = []
     for f in files:
-        if not f.filename: continue
+        if not f.filename:
+            continue
+        f.seek(0, 2)
+        file_size = f.tell()
+        f.seek(0)
+        if file_size > MAX_FILE_SIZE_BYTES:
+            all_results.append({
+                'file': f.filename, 'error': 'Fichier trop volumineux (max 50 MB)',
+                'findings': [], 'score': 0, 'risk_level': 'ERREUR'
+            })
+            continue
         all_results.extend(extract_and_scan(f))
+
     for r in all_results:
         r.pop('content', None)
+
     threats  = [r for r in all_results if r.get('findings')]
     critical = sum(1 for r in all_results if r.get('risk_level') == 'CRITICAL')
     medium   = sum(1 for r in all_results if r.get('risk_level') == 'MEDIUM')
     low      = sum(1 for r in all_results if r.get('risk_level') == 'LOW')
+
     user = session.get('user')
     if user:
         session['session_scans'] = session.get('session_scans', 0) + 1
         ph = '%s' if (POSTGRES and DATABASE_URL) else '?'
         try:
             db_execute(f'UPDATE users SET scan_count=scan_count+1 WHERE email={ph}', (user['email'],))
-            db_execute(f'INSERT INTO scan_logs (user_email, files_count, threats_found, critical_count) VALUES ({ph},{ph},{ph},{ph})',
-                       (user['email'], len(all_results), len(threats), critical))
-        except: pass
-    return jsonify({
+            db_execute(
+                f'INSERT INTO scan_logs (user_email, files_count, threats_found, critical_count) VALUES ({ph},{ph},{ph},{ph})',
+                (user['email'], len(all_results), len(threats), critical))
+        except Exception as e:
+            logger.error("scan DB update failed email=%s: %s", user.get('email'), e)
+        logger.info("scan id=%s user=%s files=%d threats=%d critical=%d",
+                    scan_id, user.get('email'), len(all_results), len(threats), critical)
+
+    resp = jsonify({
         'results': all_results,
-        'stats': {'scanned': len(all_results), 'threats': len(threats), 'critical': critical, 'medium': medium, 'low': low, 'clean': len(all_results)-len(threats)},
-        'date': datetime.now().strftime('%d/%m/%Y %H:%M:%S')
+        'stats': {'scanned': len(all_results), 'threats': len(threats), 'critical': critical,
+                  'medium': medium, 'low': low, 'clean': len(all_results) - len(threats)},
+        'date': datetime.now().strftime('%d/%m/%Y %H:%M:%S'),
+        'scan_id': scan_id
     })
+    resp.headers['X-Scan-ID'] = scan_id
+    return resp
 
 # ================================================================
 # ADMIN
@@ -605,41 +717,74 @@ def scan():
 def fmt_date(d):
     if not d: return '—'
     try: return str(d)[:16]
-    except: return '—'
+    except Exception: return '—'
 
 @app.route('/admin')
 @login_required
 @admin_required
 def admin():
+    users_raw = []
     try:
-        users_raw    = db_execute('SELECT u.*, COUNT(s.id) as session_count FROM users u LEFT JOIN sessions s ON s.user_email=u.email GROUP BY u.id, u.email, u.name, u.picture, u.created_at, u.last_seen, u.scan_count, u.total_time, u.banned ORDER BY u.last_seen DESC NULLS LAST', fetchall=True)
-        sessions_raw = db_execute('SELECT s.*, u.name FROM sessions s LEFT JOIN users u ON u.email=s.user_email ORDER BY s.login_at DESC LIMIT 50', fetchall=True)
-        logs_raw     = db_execute('SELECT sl.*, u.name FROM scan_logs sl LEFT JOIN users u ON u.email=sl.user_email ORDER BY sl.scanned_at DESC LIMIT 50', fetchall=True)
-        total_users   = db_execute('SELECT COUNT(*) as c FROM users', fetchone=True)
-        total_scans   = db_execute('SELECT SUM(scan_count) as s FROM users', fetchone=True)
-        total_threats = db_execute('SELECT SUM(threats_found) as t FROM scan_logs', fetchone=True)
-        def val(r, k): return (r.get(k) if isinstance(r, dict) else r[0]) or 0 if r else 0
-        users = []
-        for u in (users_raw or []):
-            row = dict(u)
-            row['created_at_fmt'] = fmt_date(row.get('created_at'))
-            row['last_seen_fmt']  = fmt_date(row.get('last_seen'))
-            users.append(row)
-        sessions_list = []
-        for s in (sessions_raw or []):
-            row = dict(s)
-            row['login_at_fmt']  = fmt_date(row.get('login_at'))
-            row['logout_at_fmt'] = fmt_date(row.get('logout_at'))
-            sessions_list.append(row)
-        scan_logs = []
-        for sl in (logs_raw or []):
-            row = dict(sl)
-            row['scanned_at_fmt'] = fmt_date(row.get('scanned_at'))
-            scan_logs.append(row)
+        users_raw = db_execute(
+            f'SELECT u.id, u.email, u.name, u.picture, u.last_seen, u.scan_count, u.banned, '
+            f'COUNT(ss.id) as session_count '
+            f'FROM users u '
+            f'LEFT JOIN {SESSIONS_TABLE} ss ON ss.user_email = u.email '
+            f'WHERE u.email IS NOT NULL '
+            f'GROUP BY u.id, u.email, u.name, u.picture, u.last_seen, u.scan_count, u.banned '
+            f'ORDER BY u.last_seen DESC NULLS LAST',
+            fetchall=True) or []
     except Exception as e:
-        users = []; sessions_list = []; scan_logs = []
-        total_users = total_scans = total_threats = 0
-        def val(r, k): return 0
+        logger.error("admin users_raw error: %s", e)
+
+    sessions_raw = []
+    try:
+        sessions_raw = db_execute(
+            f'SELECT ss.*, u.name FROM {SESSIONS_TABLE} ss '
+            f'LEFT JOIN users u ON u.email = ss.user_email '
+            f'ORDER BY ss.login_at DESC LIMIT 50',
+            fetchall=True) or []
+    except Exception as e:
+        logger.error("admin sessions_raw error: %s", e)
+
+    logs_raw = []
+    try:
+        logs_raw = db_execute(
+            'SELECT sl.*, u.name FROM scan_logs sl '
+            'LEFT JOIN users u ON u.email = sl.user_email '
+            'ORDER BY sl.scanned_at DESC LIMIT 50',
+            fetchall=True) or []
+    except Exception as e:
+        logger.error("admin logs_raw error: %s", e)
+
+    total_users = total_scans = total_threats = None
+    try:
+        total_users   = db_execute(f'SELECT COUNT(DISTINCT user_email) as c FROM {SESSIONS_TABLE}', fetchone=True)
+        total_scans   = db_execute('SELECT SUM(scan_count) as s FROM users WHERE email IS NOT NULL', fetchone=True)
+        total_threats = db_execute('SELECT SUM(threats_found) as t FROM scan_logs', fetchone=True)
+    except Exception as e:
+        logger.error("admin stats error: %s", e)
+
+    def val(r, k): return (r.get(k) if isinstance(r, dict) else r[0]) or 0 if r else 0
+
+    users = []
+    for u in users_raw:
+        row = dict(u)
+        row['created_at_fmt'] = fmt_date(row.get('created_at'))
+        row['last_seen_fmt']  = fmt_date(row.get('last_seen'))
+        users.append(row)
+    sessions_list = []
+    for s in sessions_raw:
+        row = dict(s)
+        row['login_at_fmt']  = fmt_date(row.get('login_at'))
+        row['logout_at_fmt'] = fmt_date(row.get('logout_at'))
+        sessions_list.append(row)
+    scan_logs = []
+    for sl in logs_raw:
+        row = dict(sl)
+        row['scanned_at_fmt'] = fmt_date(row.get('scanned_at'))
+        scan_logs.append(row)
+
     return render_template('admin.html',
         users=users, sessions_list=sessions_list, scan_logs=scan_logs,
         total_users=val(total_users, 'c'), total_scans=val(total_scans, 's'),
@@ -652,9 +797,11 @@ def admin():
 def ban_user():
     data = request.get_json()
     email = data.get('email')
-    if not email or email in ADMIN_EMAILS: return jsonify({'success': False, 'error': 'Action non autorisee'})
+    if not email or email in ADMIN_EMAILS:
+        return jsonify({'success': False, 'error': 'Action non autorisée'})
     ph = '%s' if (POSTGRES and DATABASE_URL) else '?'
     db_execute(f'UPDATE users SET banned=1 WHERE email={ph}', (email,))
+    logger.info("user banned email=%s by admin=%s", email, session.get('user', {}).get('email'))
     return jsonify({'success': True})
 
 @app.route('/admin/unban', methods=['POST'])
@@ -663,10 +810,45 @@ def ban_user():
 def unban_user():
     data = request.get_json()
     email = data.get('email')
-    if not email: return jsonify({'success': False, 'error': 'Email manquant'})
+    if not email:
+        return jsonify({'success': False, 'error': 'Email manquant'})
     ph = '%s' if (POSTGRES and DATABASE_URL) else '?'
     db_execute(f'UPDATE users SET banned=0 WHERE email={ph}', (email,))
+    logger.info("user unbanned email=%s by admin=%s", email, session.get('user', {}).get('email'))
     return jsonify({'success': True})
+
+# ================================================================
+# API
+# ================================================================
+
+@app.route('/api/stats')
+@login_required
+def api_stats():
+    try:
+        if POSTGRES and DATABASE_URL:
+            recent_q = "SELECT COUNT(*) as c FROM scan_logs WHERE scanned_at > NOW() - INTERVAL '24 hours'"
+        else:
+            recent_q = "SELECT COUNT(*) as c FROM scan_logs WHERE scanned_at > datetime('now','-1 day')"
+
+        total_users    = db_execute(f'SELECT COUNT(DISTINCT user_email) as c FROM {SESSIONS_TABLE}', fetchone=True)
+        total_scans    = db_execute('SELECT COALESCE(SUM(scan_count), 0) as s FROM users WHERE email IS NOT NULL', fetchone=True)
+        total_threats  = db_execute('SELECT COALESCE(SUM(threats_found), 0) as t FROM scan_logs', fetchone=True)
+        total_critical = db_execute('SELECT COALESCE(SUM(critical_count), 0) as cr FROM scan_logs', fetchone=True)
+        scans_24h      = db_execute(recent_q, fetchone=True)
+
+        def val(r, k): return (r.get(k) if isinstance(r, dict) else r[0]) or 0 if r else 0
+
+        return jsonify({
+            'total_users':    val(total_users, 'c'),
+            'total_scans':    val(total_scans, 's'),
+            'total_threats':  val(total_threats, 't'),
+            'total_critical': val(total_critical, 'cr'),
+            'scans_24h':      val(scans_24h, 'c'),
+            'timestamp':      datetime.utcnow().isoformat() + 'Z'
+        })
+    except Exception as e:
+        logger.error("api_stats error: %s", e)
+        return jsonify({'error': 'Erreur serveur'}), 500
 
 @app.route('/health')
 def health():
